@@ -3,76 +3,171 @@
 from typing import Dict, List, Any
 from .base import ResourceCollector, register_collector
 
+
 @register_collector
 class S3Collector(ResourceCollector):
     def get_service_name(self) -> str:
-        return 's3'
-    
+        return "s3"
+
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
-        
+
         try:
-            for bucket in self.client.list_buckets()['Buckets']:
-                bucket_name = bucket['Name']
+            for bucket in self.client.list_buckets()["Buckets"]:
+                bucket_name = bucket["Name"]
                 try:
-                    tags = self.client.get_bucket_tagging(Bucket=bucket_name).get('TagSet', [])
+                    tags = self.client.get_bucket_tagging(Bucket=bucket_name).get(
+                        "TagSet", []
+                    )
                 except:
                     tags = []
-                
-                resources.append({
-                    'type': 'bucket',
-                    'id': bucket_name,
-                    'arn': f"arn:aws:s3:::{bucket_name}",
-                    'tags': tags
-                })
+
+                resources.append(
+                    {
+                        "type": "bucket",
+                        "id": bucket_name,
+                        "arn": f"arn:aws:s3:::{bucket_name}",
+                        "tags": tags,
+                    }
+                )
         except Exception as e:
             print(f"Error collecting S3 buckets: {str(e)}")
-            
+
         return resources
+
 
 @register_collector
 class EFSCollector(ResourceCollector):
     def get_service_name(self) -> str:
-        return 'efs'
-    
+        return "efs"
+
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
-        
+
         try:
-            paginator = self.client.get_paginator('describe_file_systems')
+            paginator = self.client.get_paginator("describe_file_systems")
             for page in paginator.paginate():
-                for fs in page['FileSystems']:
-                    resources.append({
-                        'type': 'filesystem',
-                        'id': fs['FileSystemId'],
-                        'arn': fs['FileSystemArn'],
-                        'tags': fs.get('Tags', [])
-                    })
+                for fs in page["FileSystems"]:
+                    resources.append(
+                        {
+                            "type": "filesystem",
+                            "id": fs["FileSystemId"],
+                            "arn": fs["FileSystemArn"],
+                            "tags": fs.get("Tags", []),
+                        }
+                    )
         except Exception as e:
             print(f"Error collecting EFS filesystems: {str(e)}")
-            
+
         return resources
+
 
 @register_collector
 class EBSCollector(ResourceCollector):
     def get_service_name(self) -> str:
-        return 'ec2'  # API call is made to EC2 service
-    
+        return "ec2"  # API call is made to EC2 service
+
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
-        
+        total_volumes = 0
+        managed_volumes = 0
+
         try:
-            paginator = self.client.get_paginator('describe_volumes')
+            paginator = self.client.get_paginator("describe_volumes")
             for page in paginator.paginate():
-                for volume in page['Volumes']:
-                    resources.append({
-                        'type': 'volume',
-                        'id': volume['VolumeId'],
-                        'arn': f"arn:aws:ec2:{self.session.region_name}:{self.session.client('sts').get_caller_identity()['Account']}:volume/{volume['VolumeId']}",
-                        'size': volume['Size'],
-                        'tags': volume.get('Tags', [])
-                    })
+                for volume in page["Volumes"]:
+                    total_volumes += 1
+                    # Only include volumes that need explicit management
+                    if self._should_manage_volume(volume):
+                        managed_volumes += 1
+                        resources.append(
+                            {
+                                "type": "volume",
+                                "id": volume["VolumeId"],
+                                "arn": f"arn:aws:ec2:{self.session.region_name}:{self.session.client('sts').get_caller_identity()['Account']}:volume/{volume['VolumeId']}",
+                                "size": volume["Size"],
+                                "tags": volume.get("Tags", []),
+                                "attachments": volume.get("Attachments", []),
+                                "state": volume.get("State"),
+                                "availability_zone": volume.get("AvailabilityZone"),
+                                "volume_type": volume.get("VolumeType"),
+                            }
+                        )
+
+            if total_volumes > managed_volumes:
+                print(
+                    f"Note: {total_volumes - managed_volumes} volumes are EC2-managed and excluded from checks"
+                )
+
         except Exception as e:
             print(f"Error collecting EBS volumes: {str(e)}")
-            
+
+        return resources
+
+    def _should_manage_volume(self, volume: Dict[str, Any]) -> bool:
+        """
+        Determine if an EBS volume should be explicitly managed.
+        Returns True if:
+        - Volume is not attached to any instance
+        - Volume has DeleteOnTermination=False for any attachment
+        Returns False if:
+        - Volume is attached to an instance with DeleteOnTermination=True
+        """
+        attachments = volume.get("Attachments", [])
+
+        # If volume is not attached, it should be managed
+        if not attachments:
+            return True
+
+        # Check each attachment
+        for attachment in attachments:
+            # If DeleteOnTermination is False for any attachment,
+            # the volume should be managed explicitly
+            if not attachment.get("DeleteOnTermination", True):
+                return True
+
+        # Volume is attached and will be deleted with instance(s)
+        return False
+
+
+@register_collector
+class LambdaCollector(ResourceCollector):
+    def get_service_name(self) -> str:
+        return "lambda"
+
+    def collect(self) -> List[Dict[str, Any]]:
+        resources = []
+        try:
+            paginator = self.client.get_paginator("list_functions")
+            for page in paginator.paginate():
+                for function in page["Functions"]:
+                    # Get function tags
+                    try:
+                        tags = self.client.list_tags(
+                            Resource=function["FunctionArn"]
+                        ).get("Tags", {})
+                    except Exception:
+                        tags = {}
+
+                    resources.append(
+                        {
+                            "type": "aws_lambda_function",
+                            "id": function["FunctionName"],
+                            "arn": function["FunctionArn"],
+                            "tags": tags,
+                            "details": {
+                                "runtime": function.get("Runtime"),
+                                "role": function.get("Role"),
+                                "handler": function.get("Handler"),
+                                "description": function.get("Description"),
+                                "memory_size": function.get("MemorySize"),
+                                "timeout": function.get("Timeout"),
+                                "last_modified": str(function.get("LastModified")),
+                                "version": function.get("Version"),
+                            },
+                        }
+                    )
+        except Exception as e:
+            print(f"Error collecting Lambda functions: {str(e)}")
+
         return resources
