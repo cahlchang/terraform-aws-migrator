@@ -12,7 +12,7 @@ class S3Collector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_": "s3"}
+        return {"aws_todo": "s3"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -24,7 +24,7 @@ class S3Collector(ResourceCollector):
                     tags = self.client.get_bucket_tagging(Bucket=bucket_name).get(
                         "TagSet", []
                     )
-                except:
+                except:  # noqa: E722
                     tags = []
 
                 resources.append(
@@ -50,7 +50,7 @@ class EFSCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_": "efs"}
+        return {"aws_todo": "efs"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -81,7 +81,7 @@ class EBSCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_": "ebs"}
+        return {"aws_todo": "ebs"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
