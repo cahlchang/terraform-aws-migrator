@@ -9,8 +9,13 @@ logger = logging.getLogger(__name__)
 
 @register_collector
 class EC2Collector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "ec2"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_todo": "ec2"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -75,8 +80,13 @@ class EC2Collector(ResourceCollector):
 
 @register_collector
 class ECSCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "ecs"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_todo": "ecs"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -119,5 +129,53 @@ class ECSCollector(ResourceCollector):
 
         except Exception as e:
             logger.error(f"Error collecting ECS resources: {str(e)}")
+
+        return resources
+
+
+@register_collector
+class LambdaCollector(ResourceCollector):
+    @classmethod
+    def get_service_name(self) -> str:
+        return "lambda"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_todo": "lambda"}
+
+    def collect(self) -> List[Dict[str, Any]]:
+        resources = []
+        try:
+            paginator = self.client.get_paginator("list_functions")
+            for page in paginator.paginate():
+                for function in page["Functions"]:
+                    # Get function tags
+                    try:
+                        tags = self.client.list_tags(
+                            Resource=function["FunctionArn"]
+                        ).get("Tags", {})
+                    except Exception:
+                        tags = {}
+
+                    resources.append(
+                        {
+                            "type": "aws_lambda_function",
+                            "id": function["FunctionName"],
+                            "arn": function["FunctionArn"],
+                            "tags": tags,
+                            "details": {
+                                "runtime": function.get("Runtime"),
+                                "role": function.get("Role"),
+                                "handler": function.get("Handler"),
+                                "description": function.get("Description"),
+                                "memory_size": function.get("MemorySize"),
+                                "timeout": function.get("Timeout"),
+                                "last_modified": str(function.get("LastModified")),
+                                "version": function.get("Version"),
+                            },
+                        }
+                    )
+        except Exception as e:
+            print(f"Error collecting Lambda functions: {str(e)}")
 
         return resources

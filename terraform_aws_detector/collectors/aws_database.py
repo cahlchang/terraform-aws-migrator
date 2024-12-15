@@ -6,8 +6,15 @@ from .base import ResourceCollector, register_collector
 
 @register_collector
 class RDSCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "rds"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            'aws_todo': 'rds'
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -52,8 +59,15 @@ class RDSCollector(ResourceCollector):
 
 @register_collector
 class DynamoDBCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "dynamodb"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            'aws_todo': 'dynamodb'
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -83,8 +97,15 @@ class DynamoDBCollector(ResourceCollector):
 
 @register_collector
 class ElastiCacheCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "elasticache"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            'aws_todo': 'elasticache'
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []

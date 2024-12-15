@@ -6,8 +6,13 @@ from .base import ResourceCollector, register_collector
 
 @register_collector
 class IAMCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "iam"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_": "iam"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -70,8 +75,13 @@ class IAMCollector(ResourceCollector):
 
 @register_collector
 class KMSCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "kms"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_": "kms"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -105,8 +115,13 @@ class KMSCollector(ResourceCollector):
 
 @register_collector
 class SecretsManagerCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "secretsmanager"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_": "secretsmanager"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []

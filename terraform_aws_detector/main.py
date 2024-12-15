@@ -2,12 +2,10 @@
 
 import argparse
 from rich.console import Console
-
+from terraform_aws_detector.utils.resource_utils import show_supported_resources
 from terraform_aws_detector.auditor import AWSResourceAuditor
 
 from terraform_aws_detector.formatters.output_formatter import format_output
-
-console = Console()
 
 
 def main():
@@ -15,7 +13,7 @@ def main():
         description="Detect AWS resources that are not managed by Terraform"
     )
     parser.add_argument(
-        "--tf-dir", type=str, required=True, help="Directory containing Terraform files"
+        "--tf-dir", type=str, help="Directory containing Terraform files"
     )
     parser.add_argument(
         "--output",
@@ -29,10 +27,24 @@ def main():
         type=str,
         help="Output file path (optional, defaults to stdout)",
     )
+    parser.add_argument(
+        "--list-resources", action="store_true", help="List supported resource types"
+    )
 
     args = parser.parse_args()
+    console = Console(stderr=False, file=None)
 
-    console = Console()
+    # Show supported resources if requested
+    if args.list_resources:
+        show_supported_resources()
+        return 0
+
+    # Validate required arguments for resource detection
+    if not args.tf_dir:
+        console.print(
+            "[red]Error: --tf-dir is required when not using --list-resources[/red]"
+        )
+        return 1
 
     try:
         # Run the detection

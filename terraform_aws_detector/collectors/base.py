@@ -16,9 +16,10 @@ class ResourceCollector(ABC):
         session: boto3.Session = None,
         progress_callback: Optional[Callable] = None,
     ):
+        self._client = None
+        self._account_id = None
+        self._region = None
         self.session = session or boto3.Session()
-        self.client = self.session.client(self.get_service_name())
-        self.account_id = self.session.client("sts").get_caller_identity()["Account"]
         self.progress_callback = progress_callback
 
     @abstractmethod
@@ -26,9 +27,24 @@ class ResourceCollector(ABC):
         """Return the AWS service name for this collector"""
         raise NotImplementedError("Subclasses must implement get_service_name")
 
-    def get_client(self) -> boto3.client:
-        """Get boto3 client for the service"""
-        return self.session.client(self.get_service_name())
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = self.session.client(self.get_service_name())
+        return self._client
+
+    @property
+    def account_id(self):
+        if self._account_id is None:
+            self._account_id = self.session.client('sts').get_caller_identity()['Account']
+        return self._account_id
+
+    @property
+    def region(self):
+        """Get current AWS region"""
+        if self._region is None:
+            self._region = self.session.region_name
+        return self._region
 
     @abstractmethod
     def collect(self) -> List[Dict[str, Any]]:
@@ -40,13 +56,11 @@ class ResourceCollector(ABC):
         """Convert AWS tags list to dictionary"""
         return {tag["Key"]: tag["Value"] for tag in tags} if tags else {}
 
-    def get_account_id(self) -> str:
-        """Get current AWS account ID"""
-        return self.session.client("sts").get_caller_identity()["Account"]
 
-    def get_region(self) -> str:
-        """Get current AWS region"""
-        return self.session.region_name
+
+    def get_resource_types(self) -> Dict[str, str]:
+        """Return dictionary of resource types supported by this collector"""
+        return {}
 
     def build_arn(self, resource_type: str, resource_id: str) -> str:
         """Build ARN for a resource"""

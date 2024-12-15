@@ -6,8 +6,15 @@ from .base import ResourceCollector, register_collector
 
 @register_collector
 class StepFunctionCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "stepfunctions"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            'aws_todo': 'stepfunctions'
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []

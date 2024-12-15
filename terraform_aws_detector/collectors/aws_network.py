@@ -3,10 +3,16 @@
 from typing import Dict, List, Any
 from .base import ResourceCollector, register_collector
 
+
 @register_collector
 class APIGatewayCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "apigateway"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_todo": "apigateway"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -32,8 +38,13 @@ class APIGatewayCollector(ResourceCollector):
 
 @register_collector
 class APIGatewayV2Collector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "apigatewayv2"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_todo": "apigatewayv2"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -59,8 +70,13 @@ class APIGatewayV2Collector(ResourceCollector):
 
 @register_collector
 class Route53Collector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "route53"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_todo": "route53"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -91,8 +107,13 @@ class Route53Collector(ResourceCollector):
 
 @register_collector
 class CloudFrontCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "cloudfront"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_todo": "cloudfront"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -124,8 +145,18 @@ class CloudFrontCollector(ResourceCollector):
 class LoadBalancerV2Collector(ResourceCollector):
     """Collector for ALB/NLB and related resources (ELBv2)"""
 
+    @classmethod
     def get_service_name(self) -> str:
         return "elbv2"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_lb": "Application and Network Load Balancers",
+            "aws_lb_target_group": "Target Groups for ALB/NLB",
+            "aws_lb_listener": "Listeners for ALB/NLB",
+            "aws_lb_listener_rule": "Routing rules for ALB listeners",
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -356,8 +387,13 @@ class LoadBalancerV2Collector(ResourceCollector):
 class ClassicLoadBalancerCollector(ResourceCollector):
     """Collector for Classic Load Balancers (ELB)"""
 
+    @classmethod
     def get_service_name(self) -> str:
         return "elb"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {"aws_elb": "Legacy Load Balancers"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []

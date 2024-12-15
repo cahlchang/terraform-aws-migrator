@@ -7,7 +7,6 @@ from typing import Dict, List, Set, Any, Optional
 import boto3
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-from rich.panel import Panel
 
 from terraform_aws_detector.collectors.base import registry
 from terraform_aws_detector.collection_status import CollectionStatus
@@ -51,14 +50,13 @@ class AWSResourceAuditor:
         # Create console for progress display
         console = Console()
 
-        # Set up progress tracking
-        progress_columns = [
+        with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             TimeElapsedColumn(),
-        ]
-
-        with Progress(*progress_columns, console=console, transient=True) as progress:
+            console=console,
+            transient=True
+        ) as progress:
             # Get Terraform managed resources
             tf_task = progress.add_task(
                 "[yellow]Detecting Terraform managed resources...", total=None
