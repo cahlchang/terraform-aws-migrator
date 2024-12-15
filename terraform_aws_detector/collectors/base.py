@@ -11,14 +11,20 @@ logger = logging.getLogger(__name__)
 class ResourceCollector(ABC):
     """Base class for AWS resource collectors"""
 
-    def __init__(self, session: boto3.Session = None):
+    def __init__(
+        self,
+        session: boto3.Session = None,
+        progress_callback: Optional[Callable] = None,
+    ):
         self.session = session or boto3.Session()
-        self.client = self.get_client()
+        self.client = self.session.client(self.get_service_name())
+        self.account_id = self.session.client("sts").get_caller_identity()["Account"]
+        self.progress_callback = progress_callback
 
     @abstractmethod
     def get_service_name(self) -> str:
-        """Get AWS service name for this collector"""
-        pass
+        """Return the AWS service name for this collector"""
+        raise NotImplementedError("Subclasses must implement get_service_name")
 
     def get_client(self) -> boto3.client:
         """Get boto3 client for the service"""
@@ -28,6 +34,11 @@ class ResourceCollector(ABC):
     def collect(self) -> List[Dict[str, Any]]:
         """Collect resources for the service"""
         pass
+
+    @staticmethod
+    def extract_tags(tags: List[Dict[str, str]]) -> Dict[str, str]:
+        """Convert AWS tags list to dictionary"""
+        return {tag["Key"]: tag["Value"] for tag in tags} if tags else {}
 
     def get_account_id(self) -> str:
         """Get current AWS account ID"""
