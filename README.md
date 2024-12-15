@@ -4,22 +4,23 @@
 
 ## Features
 
-- **Terraform State Integration**:  
-  Reads Terraform state files (local or S3-backed) to determine which AWS resources should be under Terraform’s control.
+- **Seamless Terraform State Integration**  
+  Automatically reads local and remote (S3-backed) Terraform state files to determine which AWS resources are currently under Terraform’s control, ensuring consistency and accuracy in your infrastructure management.
 
-- **Comprehensive AWS Resource Discovery**:  
-  Uses a pluggable architecture with multiple collectors to fetch resources from numerous AWS services, including:
-  - Compute: EC2, ECS
-  - Database: RDS, DynamoDB, ElastiCache
-  - Network: APIGateway, APIGatewayV2, Route53, CloudFront
-  - Security: IAM, KMS, Secrets Manager
-  - Storage: S3, EFS, EBS
+- **Extensive AWS Resource Coverage**  
+  Employing a pluggable architecture, the tool uses multiple collectors to discover and map a wide array of AWS services:
+  - **Application**: Step Functions
+  - **Compute**: EC2, ECS, Lambda
+  - **Database**: RDS, DynamoDB, ElastiCache
+  - **Network**: API Gateway, API Gateway v2, Route53, CloudFront, Legacy Load Balancers (ELB), Application/Network Load Balancers (ALB/NLB), LB Listeners, LB Listener Rules, LB Target Groups
+  - **Security**: IAM, KMS, Secrets Manager
+  - **Storage**: S3, EFS, EBS
 
-- **Unmanaged Resource Detection**:  
-  Identifies resources present in AWS but missing from the Terraform state, helping you maintain consistent infrastructure definitions.
+- **Unmanaged Resource Detection**  
+  Identifies AWS resources not currently represented in your Terraform state, making it easy to bring these unmanaged components under Infrastructure as Code for streamlined operations.
 
-- **Flexible Output Formats**:  
-  Provides both JSON and human-readable text output, allowing easy integration into CI pipelines or direct inspection.
+- **Flexible Output Formats**  
+  Outputs findings as both JSON and human-readable text, enabling effortless integration into CI/CD pipelines or direct review, ensuring that results are accessible and actionable.
 
 ## Getting Started
 
