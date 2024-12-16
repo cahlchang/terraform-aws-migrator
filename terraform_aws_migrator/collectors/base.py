@@ -1,4 +1,4 @@
-# terraform_aws_detector/collectors/base.py
+# terraform_aws_migrator/collectors/base.py
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Callable, Optional
@@ -11,31 +11,56 @@ logger = logging.getLogger(__name__)
 class ResourceCollector(ABC):
     """Base class for AWS resource collectors"""
 
-    def __init__(self, session: boto3.Session = None):
+    def __init__(
+        self,
+        session: boto3.Session = None,
+        progress_callback: Optional[Callable] = None,
+    ):
+        self._client = None
+        self._account_id = None
+        self._region = None
         self.session = session or boto3.Session()
-        self.client = self.get_client()
+        self.progress_callback = progress_callback
 
     @abstractmethod
     def get_service_name(self) -> str:
-        """Get AWS service name for this collector"""
-        pass
+        """Return the AWS service name for this collector"""
+        raise NotImplementedError("Subclasses must implement get_service_name")
 
-    def get_client(self) -> boto3.client:
-        """Get boto3 client for the service"""
-        return self.session.client(self.get_service_name())
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = self.session.client(self.get_service_name())
+        return self._client
+
+    @property
+    def account_id(self):
+        if self._account_id is None:
+            self._account_id = self.session.client('sts').get_caller_identity()['Account']
+        return self._account_id
+
+    @property
+    def region(self):
+        """Get current AWS region"""
+        if self._region is None:
+            self._region = self.session.region_name
+        return self._region
 
     @abstractmethod
     def collect(self) -> List[Dict[str, Any]]:
         """Collect resources for the service"""
         pass
 
-    def get_account_id(self) -> str:
-        """Get current AWS account ID"""
-        return self.session.client("sts").get_caller_identity()["Account"]
+    @staticmethod
+    def extract_tags(tags: List[Dict[str, str]]) -> Dict[str, str]:
+        """Convert AWS tags list to dictionary"""
+        return {tag["Key"]: tag["Value"] for tag in tags} if tags else {}
 
-    def get_region(self) -> str:
-        """Get current AWS region"""
-        return self.session.region_name
+
+
+    def get_resource_types(self) -> Dict[str, str]:
+        """Return dictionary of resource types supported by this collector"""
+        return {}
 
     def build_arn(self, resource_type: str, resource_id: str) -> str:
         """Build ARN for a resource"""

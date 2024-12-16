@@ -6,8 +6,16 @@ from .base import ResourceCollector, register_collector
 
 @register_collector
 class RDSCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "rds"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_db_instance": "RDS Database Instances",
+            "aws_rds_cluster": "RDS Database Clusters"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -52,8 +60,15 @@ class RDSCollector(ResourceCollector):
 
 @register_collector
 class DynamoDBCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "dynamodb"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_dynamodb_table": "DynamoDB Tables"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -83,8 +98,16 @@ class DynamoDBCollector(ResourceCollector):
 
 @register_collector
 class ElastiCacheCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "elasticache"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_elasticache_cluster": "ElastiCache Clusters",
+            "aws_elasticache_replication_group": "ElastiCache Replication Groups"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -124,3 +147,4 @@ class ElastiCacheCollector(ResourceCollector):
             print(f"Error collecting ElastiCache resources: {str(e)}")
 
         return resources
+

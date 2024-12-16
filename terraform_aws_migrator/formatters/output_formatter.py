@@ -1,4 +1,4 @@
-# terraform_aws_detector/formatters/output_formatter.py
+# terraform_aws_migrator/formatters/output_formatter.py
 
 import json
 from typing import Dict, List, Any

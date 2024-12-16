@@ -1,4 +1,4 @@
-# terraform_aws_detector/collection_status.py
+# terraform_aws_migrator/collection_status.py
 
 from typing import Optional
 from datetime import datetime

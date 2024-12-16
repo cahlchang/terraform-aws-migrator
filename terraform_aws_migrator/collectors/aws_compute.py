@@ -1,4 +1,4 @@
-# terraform_aws_detector/collectors/aws_compute.py
+# terraform_aws_migrator/collectors/aws_compute.py
 
 from typing import Dict, List, Any
 from .base import ResourceCollector, register_collector
@@ -9,8 +9,18 @@ logger = logging.getLogger(__name__)
 
 @register_collector
 class EC2Collector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "ec2"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_instance": "EC2 Instances",
+            "aws_vpc": "Virtual Private Clouds",
+            "aws_security_group": "Security Groups",
+            "aws_ebs_volume": "EBS Volumes"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -75,8 +85,17 @@ class EC2Collector(ResourceCollector):
 
 @register_collector
 class ECSCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "ecs"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_ecs_cluster": "ECS Clusters",
+            "aws_ecs_service": "ECS Services"
+        }
+
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -119,5 +138,55 @@ class ECSCollector(ResourceCollector):
 
         except Exception as e:
             logger.error(f"Error collecting ECS resources: {str(e)}")
+
+        return resources
+
+
+@register_collector
+class LambdaCollector(ResourceCollector):
+    @classmethod
+    def get_service_name(self) -> str:
+        return "lambda"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_lambda_function": "Lambda Functions"
+        }
+
+    def collect(self) -> List[Dict[str, Any]]:
+        resources = []
+        try:
+            paginator = self.client.get_paginator("list_functions")
+            for page in paginator.paginate():
+                for function in page["Functions"]:
+                    # Get function tags
+                    try:
+                        tags = self.client.list_tags(
+                            Resource=function["FunctionArn"]
+                        ).get("Tags", {})
+                    except Exception:
+                        tags = {}
+
+                    resources.append(
+                        {
+                            "type": "aws_lambda_function",
+                            "id": function["FunctionName"],
+                            "arn": function["FunctionArn"],
+                            "tags": tags,
+                            "details": {
+                                "runtime": function.get("Runtime"),
+                                "role": function.get("Role"),
+                                "handler": function.get("Handler"),
+                                "description": function.get("Description"),
+                                "memory_size": function.get("MemorySize"),
+                                "timeout": function.get("Timeout"),
+                                "last_modified": str(function.get("LastModified")),
+                                "version": function.get("Version"),
+                            },
+                        }
+                    )
+        except Exception as e:
+            print(f"Error collecting Lambda functions: {str(e)}")
 
         return resources

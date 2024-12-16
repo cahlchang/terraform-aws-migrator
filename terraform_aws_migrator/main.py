@@ -1,13 +1,20 @@
-# terraform_aws_detector/main.py
+# terraform_aws_migrator/main.py
 
 import argparse
+import logging
 from rich.console import Console
+from terraform_aws_migrator.utils.resource_utils import show_supported_resources
+from terraform_aws_migrator.auditor import AWSResourceAuditor
 
-from terraform_aws_detector.auditor import AWSResourceAuditor
+from terraform_aws_migrator.formatters.output_formatter import format_output
 
-from terraform_aws_detector.formatters.output_formatter import format_output
 
-console = Console()
+def setup_logging(debug: bool = False):
+    """Configure logging settings"""
+    log_level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(
+        level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
 
 
 def main():
@@ -15,7 +22,7 @@ def main():
         description="Detect AWS resources that are not managed by Terraform"
     )
     parser.add_argument(
-        "--tf-dir", type=str, required=True, help="Directory containing Terraform files"
+        "--tf-dir", type=str, help="Directory containing Terraform files"
     )
     parser.add_argument(
         "--output",
@@ -29,10 +36,27 @@ def main():
         type=str,
         help="Output file path (optional, defaults to stdout)",
     )
+    parser.add_argument(
+        "--list-resources", action="store_true", help="List supported resource types"
+    )
+
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
+    setup_logging(args.debug)  # ロギング設定を初期化
+    console = Console(stderr=False, file=None)
 
-    console = Console()
+    # Show supported resources if requested
+    if args.list_resources:
+        show_supported_resources()
+        return 0
+
+    # Validate required arguments for resource detection
+    if not args.tf_dir:
+        console.print(
+            "[red]Error: --tf-dir is required when not using --list-resources[/red]"
+        )
+        return 1
 
     try:
         # Run the detection

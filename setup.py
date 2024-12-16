@@ -7,31 +7,29 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
     requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
 
 setup(
-    name="terraform_aws_detector",
+    name="terraform-aws-migrator",
     version="0.1.0",
-    author="cahlchang",
-    author_email="kahlua.dane@gmail.com",
-    description="A tool to audit AWS resources and compare with Terraform state",
-    long_description=long_description,
-    long_description_content_type="text/markdown",
-    url="https://github.com/cahlchang/terraform_aws_detector",
     packages=find_packages(),
+    install_requires=[
+        "python-hcl2",
+        "boto3",
+        "rich",
+    ],
+    entry_points={
+        'console_scripts': [
+            'tfawsmigrator=terraform_aws_migrator.main:main',
+        ],
+    },
+    author="Your Name",
+    author_email="your.email@example.com",
+    description="A tool to migrate unmanaged AWS resources to Terraform",
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
+    url="https://github.com/yourusername/terraform-aws-migrator",
     classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Intended Audience :: Developers",
-        "Topic :: Software Development :: Build Tools",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.8",
-    install_requires=requirements,
-    entry_points={
-        "console_scripts": [
-            "aws-resource-audit=terraform_aws_detector.main:main",
-        ],
-    },
+    python_requires='>=3.8',
 )

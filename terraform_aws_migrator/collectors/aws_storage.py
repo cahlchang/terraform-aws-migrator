@@ -6,8 +6,15 @@ from .base import ResourceCollector, register_collector
 
 @register_collector
 class S3Collector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "s3"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_s3_bucket": "S3 Buckets"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -19,7 +26,7 @@ class S3Collector(ResourceCollector):
                     tags = self.client.get_bucket_tagging(Bucket=bucket_name).get(
                         "TagSet", []
                     )
-                except:
+                except:  # noqa: E722
                     tags = []
 
                 resources.append(
@@ -38,8 +45,16 @@ class S3Collector(ResourceCollector):
 
 @register_collector
 class EFSCollector(ResourceCollector):
+
+    @classmethod
     def get_service_name(self) -> str:
         return "efs"
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_efs_file_system": "EFS File Systems"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -64,8 +79,15 @@ class EFSCollector(ResourceCollector):
 
 @register_collector
 class EBSCollector(ResourceCollector):
+    @classmethod
     def get_service_name(self) -> str:
         return "ec2"  # API call is made to EC2 service
+
+    @classmethod
+    def get_resource_types(self) -> Dict[str, str]:
+        return {
+            "aws_ebs_volume": "EBS Volumes"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -93,11 +115,6 @@ class EBSCollector(ResourceCollector):
                                 "volume_type": volume.get("VolumeType"),
                             }
                         )
-
-            if total_volumes > managed_volumes:
-                print(
-                    f"Note: {total_volumes - managed_volumes} volumes are EC2-managed and excluded from checks"
-                )
 
         except Exception as e:
             print(f"Error collecting EBS volumes: {str(e)}")
@@ -128,46 +145,3 @@ class EBSCollector(ResourceCollector):
 
         # Volume is attached and will be deleted with instance(s)
         return False
-
-
-@register_collector
-class LambdaCollector(ResourceCollector):
-    def get_service_name(self) -> str:
-        return "lambda"
-
-    def collect(self) -> List[Dict[str, Any]]:
-        resources = []
-        try:
-            paginator = self.client.get_paginator("list_functions")
-            for page in paginator.paginate():
-                for function in page["Functions"]:
-                    # Get function tags
-                    try:
-                        tags = self.client.list_tags(
-                            Resource=function["FunctionArn"]
-                        ).get("Tags", {})
-                    except Exception:
-                        tags = {}
-
-                    resources.append(
-                        {
-                            "type": "aws_lambda_function",
-                            "id": function["FunctionName"],
-                            "arn": function["FunctionArn"],
-                            "tags": tags,
-                            "details": {
-                                "runtime": function.get("Runtime"),
-                                "role": function.get("Role"),
-                                "handler": function.get("Handler"),
-                                "description": function.get("Description"),
-                                "memory_size": function.get("MemorySize"),
-                                "timeout": function.get("Timeout"),
-                                "last_modified": str(function.get("LastModified")),
-                                "version": function.get("Version"),
-                            },
-                        }
-                    )
-        except Exception as e:
-            print(f"Error collecting Lambda functions: {str(e)}")
-
-        return resources
