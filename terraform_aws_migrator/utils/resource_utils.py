@@ -1,4 +1,4 @@
-# terraform_aws_detector/utils/resource_utils.py
+# terraform_aws_migrator/utils/resource_utils.py
 
 import importlib
 import inspect
@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Any
 from rich.console import Console
 
-from terraform_aws_detector.collectors.base import ResourceCollector
+from terraform_aws_migrator.collectors.base import ResourceCollector
 
 
 def get_collectors_info() -> Dict[str, List[Dict[str, Any]]]:
@@ -23,7 +23,7 @@ def get_collectors_info() -> Dict[str, List[Dict[str, Any]]]:
         category = file_path.stem.replace("aws_", "").title()
 
         # Import the module
-        module_name = f"terraform_aws_detector.collectors.{file_path.stem}"
+        module_name = f"terraform_aws_migrator.collectors.{file_path.stem}"
         module = importlib.import_module(module_name)
 
         # Find all collector classes in the module
@@ -59,7 +59,7 @@ def show_supported_resources():
     categories = get_collectors_info()
 
     console.print("\n[bold cyan]Supported AWS Resource Types[/bold cyan]")
-    console.print("These resources can be detected by terraform-aws-detector:\n")
+    console.print("These resources can be detected by terraform_aws_migrator:\n")
 
     for category, resources in sorted(categories.items()):
         console.print(f"[bold yellow]{category}[/bold yellow]")

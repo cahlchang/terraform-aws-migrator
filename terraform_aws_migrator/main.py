@@ -1,11 +1,20 @@
-# terraform_aws_detector/main.py
+# terraform_aws_migrator/main.py
 
 import argparse
+import logging
 from rich.console import Console
-from terraform_aws_detector.utils.resource_utils import show_supported_resources
-from terraform_aws_detector.auditor import AWSResourceAuditor
+from terraform_aws_migrator.utils.resource_utils import show_supported_resources
+from terraform_aws_migrator.auditor import AWSResourceAuditor
 
-from terraform_aws_detector.formatters.output_formatter import format_output
+from terraform_aws_migrator.formatters.output_formatter import format_output
+
+
+def setup_logging(debug: bool = False):
+    """Configure logging settings"""
+    log_level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(
+        level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
 
 
 def main():
@@ -31,7 +40,10 @@ def main():
         "--list-resources", action="store_true", help="List supported resource types"
     )
 
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+
     args = parser.parse_args()
+    setup_logging(args.debug)  # ロギング設定を初期化
     console = Console(stderr=False, file=None)
 
     # Show supported resources if requested

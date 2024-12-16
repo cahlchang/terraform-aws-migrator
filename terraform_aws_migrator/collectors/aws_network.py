@@ -1,4 +1,4 @@
-# terraform_aws_detector/collectors/aws_networking.py
+# terraform_aws_migrator/collectors/aws_networking.py
 
 from typing import Dict, List, Any
 from .base import ResourceCollector, register_collector

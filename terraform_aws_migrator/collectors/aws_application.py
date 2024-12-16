@@ -1,4 +1,4 @@
-# terraform_aws_detector/collectors/aws_application.py
+# terraform_aws_migrator/collectors/aws_application.py
 
 from typing import Dict, List, Any
 from .base import ResourceCollector, register_collector

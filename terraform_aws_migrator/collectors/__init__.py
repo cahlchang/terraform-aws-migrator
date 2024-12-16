@@ -1,3 +1,4 @@
+from . import aws_iam
 from . import aws_compute
 from . import aws_database
 from . import aws_network

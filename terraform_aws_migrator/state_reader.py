@@ -1,4 +1,4 @@
-# terraform_aws_detector/state_reader.py
+# terraform_aws_migrator/state_reader.py
 
 import json
 from pathlib import Path

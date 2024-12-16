@@ -1,6 +1,6 @@
-# Terraform AWS Detector
+# Terraform AWS Migrator
 
-**Terraform AWS Detector** is a tool designed to audit AWS resources and identify which ones are not managed by Terraform. It compares resources defined in Terraform state files against the actual resources found in your AWS account, helping you maintain proper resource management and avoid resource drift.
+**Terraform AWS Migrator** is a tool designed to audit AWS resources and identify which ones are not managed by Terraform. It compares resources defined in Terraform state files against the actual resources found in your AWS account, helping you maintain proper resource management and avoid resource drift.
 
 ## Features
 
@@ -60,8 +60,8 @@
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/cahlchang/terraform_aws_detector.git
-   cd terraform_aws_detector
+   git clone https://github.com/cahlchang/terraform-aws-migrator.git
+   cd terraform-aws-migrator
    ```
 
 2. Install the package:
@@ -74,7 +74,7 @@
 Run the tool by specifying the directory that contains your Terraform configuration and state files:
 
 ```bash
-terraform_aws_detector --tf-dir path/to/terraform --output json
+terraform_aws_migrator --tf-dir path/to/terraform --output json
 ```
 
 Command-line options:
@@ -87,7 +87,7 @@ Command-line options:
 ### Example
 
 ```bash
-terraform_aws_detector --tf-dir ./terraform-code --output json --output-file unmanaged_resources.json
+terraform_aws_migrator --tf-dir ./terraform-code --output json --output-file unmanaged_resources.json
 ```
 
 This command will:
@@ -99,7 +99,7 @@ This command will:
 
 ## Project Structure
 
-- `terraform_aws_detector/`:
+- `terraform_aws_migrator/`:
   Core implementation files:
   - `auditor.py`: Main logic for auditing and comparing Terraform-managed vs. AWS-discovered resources.
   - `state_reader.py`: Reads Terraform state (local or S3) and extracts managed resource IDs.

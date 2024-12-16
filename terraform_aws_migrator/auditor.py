@@ -1,4 +1,4 @@
-# terraform_aws_detector/auditor.py
+# terraform_aws_migrator/auditor.py
 
 import json
 import time
@@ -8,9 +8,9 @@ import boto3
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-from terraform_aws_detector.collectors.base import registry
-from terraform_aws_detector.collection_status import CollectionStatus
-from terraform_aws_detector.state_reader import TerraformStateReader
+from terraform_aws_migrator.collectors.base import registry
+from terraform_aws_migrator.collection_status import CollectionStatus
+from terraform_aws_migrator.state_reader import TerraformStateReader
 
 
 class AWSResourceAuditor:
@@ -63,7 +63,6 @@ class AWSResourceAuditor:
             )
 
             tf_resources = self.get_terraform_managed_resources(tf_dir, progress)
-            progress.update(tf_task, description="[green]Terraform resources detected")
 
             # Collect current AWS resources
             aws_task = progress.add_task("[cyan]Detecting AWS resources...", total=None)

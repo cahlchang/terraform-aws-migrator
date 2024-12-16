@@ -1,4 +1,4 @@
-# terraform_aws_detector/collectors/base.py
+# terraform_aws_migrator/collectors/base.py
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Callable, Optional
