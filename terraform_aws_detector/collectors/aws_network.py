@@ -12,7 +12,7 @@ class APIGatewayCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_todo": "apigateway"}
+        return {"aws_api_gateway_rest_api": "API Gateway REST APIs"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -44,7 +44,7 @@ class APIGatewayV2Collector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_todo": "apigatewayv2"}
+        return {"aws_apigatewayv2_api": "API Gateway HTTP/WebSocket APIs"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -76,7 +76,7 @@ class Route53Collector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_todo": "route53"}
+        return {"aws_route53_zone": "Route 53 Hosted Zones"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -113,7 +113,7 @@ class CloudFrontCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_todo": "cloudfront"}
+        return {"aws_cloudfront_distribution": "CloudFront Distributions"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []

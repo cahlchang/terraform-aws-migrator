@@ -12,7 +12,9 @@ class S3Collector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_todo": "s3"}
+        return {
+            "aws_s3_bucket": "S3 Buckets"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -50,7 +52,9 @@ class EFSCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_todo": "efs"}
+        return {
+            "aws_efs_file_system": "EFS File Systems"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -81,7 +85,9 @@ class EBSCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_todo": "ebs"}
+        return {
+            "aws_ebs_volume": "EBS Volumes"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []

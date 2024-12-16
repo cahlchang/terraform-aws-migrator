@@ -12,9 +12,7 @@ class StepFunctionCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {
-            'aws_todo': 'stepfunctions'
-        }
+        return {"aws_sfn_state_machine": "Step Functions State Machines"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []

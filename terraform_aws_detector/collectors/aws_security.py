@@ -12,7 +12,11 @@ class IAMCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_": "iam"}
+        return {
+            "aws_iam_role": "IAM Roles",
+            "aws_iam_user": "IAM Users",
+            "aws_iam_group": "IAM Groups"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -81,7 +85,9 @@ class KMSCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_": "kms"}
+        return {
+            "aws_kms_key": "KMS Customer-Managed Keys"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -121,7 +127,9 @@ class SecretsManagerCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_": "secretsmanager"}
+        return {
+            "aws_secretsmanager_secret": "Secrets Manager Secrets"
+        }
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
