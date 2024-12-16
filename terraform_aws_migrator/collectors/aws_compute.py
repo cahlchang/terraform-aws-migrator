@@ -19,7 +19,6 @@ class EC2Collector(ResourceCollector):
             "aws_instance": "EC2 Instances",
             "aws_vpc": "Virtual Private Clouds",
             "aws_security_group": "Security Groups",
-            "aws_ebs_volume": "EBS Volumes"
         }
 
     def collect(self) -> List[Dict[str, Any]]:
@@ -64,19 +63,6 @@ class EC2Collector(ResourceCollector):
                     }
                 )
 
-            # EBS Volumes
-            paginator = self.client.get_paginator("describe_volumes")
-            for page in paginator.paginate():
-                for volume in page["Volumes"]:
-                    resources.append(
-                        {
-                            "type": "volume",
-                            "id": volume["VolumeId"],
-                            "arn": self.build_arn("volume", volume["VolumeId"]),
-                            "tags": volume.get("Tags", []),
-                        }
-                    )
-
         except Exception as e:
             logger.error(f"Error collecting EC2 resources: {str(e)}")
 
@@ -91,11 +77,7 @@ class ECSCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {
-            "aws_ecs_cluster": "ECS Clusters",
-            "aws_ecs_service": "ECS Services"
-        }
-
+        return {"aws_ecs_cluster": "ECS Clusters", "aws_ecs_service": "ECS Services"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -150,9 +132,7 @@ class LambdaCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {
-            "aws_lambda_function": "Lambda Functions"
-        }
+        return {"aws_lambda_function": "Lambda Functions"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []

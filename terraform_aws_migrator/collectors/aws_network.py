@@ -23,7 +23,7 @@ class APIGatewayCollector(ResourceCollector):
             for api in apis:
                 resources.append(
                     {
-                        "type": "rest_api",
+                        "type": "aws_api_gateway_rest_api",
                         "id": api["id"],
                         "name": api["name"],
                         "arn": f"arn:aws:apigateway:{self.session.region_name}::/restapis/{api['id']}",
@@ -55,7 +55,7 @@ class APIGatewayV2Collector(ResourceCollector):
             for api in apis:
                 resources.append(
                     {
-                        "type": f"{api['ProtocolType'].lower()}_api",
+                        "type": "aws_apigatewayv2_api",
                         "id": api["ApiId"],
                         "name": api["Name"],
                         "arn": f"arn:aws:apigateway:{self.session.region_name}::/apis/{api['ApiId']}",
@@ -93,7 +93,7 @@ class Route53Collector(ResourceCollector):
 
                     resources.append(
                         {
-                            "type": "hosted_zone",
+                            "type": "aws_route53_zone",
                             "id": zone["Id"],
                             "name": zone["Name"],
                             "tags": tags,
@@ -128,7 +128,7 @@ class CloudFrontCollector(ResourceCollector):
 
                     resources.append(
                         {
-                            "type": "distribution",
+                            "type": "aws_cloudfront_distribution",
                             "id": dist["Id"],
                             "domain_name": dist["DomainName"],
                             "arn": dist["ARN"],

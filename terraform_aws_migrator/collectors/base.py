@@ -2,8 +2,8 @@
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Callable, Optional
-import logging
 import boto3
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,9 @@ class ResourceCollector(ABC):
     @property
     def account_id(self):
         if self._account_id is None:
-            self._account_id = self.session.client('sts').get_caller_identity()['Account']
+            self._account_id = self.session.client("sts").get_caller_identity()[
+                "Account"
+            ]
         return self._account_id
 
     @property
@@ -56,8 +58,6 @@ class ResourceCollector(ABC):
         """Convert AWS tags list to dictionary"""
         return {tag["Key"]: tag["Value"] for tag in tags} if tags else {}
 
-
-
     def get_resource_types(self) -> Dict[str, str]:
         """Return dictionary of resource types supported by this collector"""
         return {}
@@ -65,8 +65,8 @@ class ResourceCollector(ABC):
     def build_arn(self, resource_type: str, resource_id: str) -> str:
         """Build ARN for a resource"""
         service = self.get_service_name()
-        account = self.get_account_id()
-        region = self.get_region()
+        account = self.account_id
+        region = self.region
 
         if service == "s3":
             return f"arn:aws:s3:::{resource_id}"

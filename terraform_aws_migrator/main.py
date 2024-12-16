@@ -8,18 +8,28 @@ from terraform_aws_migrator.auditor import AWSResourceAuditor
 
 from terraform_aws_migrator.formatters.output_formatter import format_output
 
-
 def setup_logging(debug: bool = False):
     """Configure logging settings"""
-    log_level = logging.DEBUG if debug else logging.INFO
-    logging.basicConfig(
-        level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    # Suppress all loggers initially
+    logging.getLogger().setLevel(logging.WARNING)
+    
+    # Suppress specific loggers
+    logging.getLogger('botocore').setLevel(logging.WARNING)
+    logging.getLogger('terraform_aws_migrator.collectors.base').setLevel(logging.WARNING)
+    
+    # Set debug level if requested
+    if debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger('botocore').setLevel(logging.INFO)
+        logging.getLogger('terraform_aws_migrator.collectors.base').setLevel(logging.DEBUG)
 
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Detect AWS resources that are not managed by Terraform"
+        description="Migrate AWS resources that are not managed by Terraform"
     )
     parser.add_argument(
         "--tf-dir", type=str, help="Directory containing Terraform files"
@@ -43,8 +53,8 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
-    setup_logging(args.debug)  # ロギング設定を初期化
-    console = Console(stderr=False, file=None)
+    setup_logging(args.debug)
+    console = Console(stderr=True)
 
     # Show supported resources if requested
     if args.list_resources:

@@ -46,8 +46,6 @@ class AWSResourceAuditor:
     def audit_resources(self, tf_dir: str) -> Dict[str, List[Dict[str, Any]]]:
         """Detect AWS resources that are not managed by Terraform"""
         self.start_time = time.time()
-
-        # Create console for progress display
         console = Console()
 
         with Progress(
@@ -55,50 +53,42 @@ class AWSResourceAuditor:
             TextColumn("[progress.description]{task.description}"),
             TimeElapsedColumn(),
             console=console,
-            transient=True
+            transient=True,
+            expand=True
         ) as progress:
             # Get Terraform managed resources
+            tf_resources = None
             tf_task = progress.add_task(
-                "[yellow]Detecting Terraform managed resources...", total=None
+                "[green]Reading Terraform state files...",
+                total=None
             )
 
             tf_resources = self.get_terraform_managed_resources(tf_dir, progress)
 
             # Collect current AWS resources
-            aws_task = progress.add_task("[cyan]Detecting AWS resources...", total=None)
+            progress.update(tf_task, completed=True, visible=False)
+            aws_task = progress.add_task("Collecting AWS resources...", total=None)
 
-            def progress_callback(
-                service_name: str, status: str, resource_count: Optional[int] = None
-            ):
+            def progress_callback(service_name: str, status: str, resource_count: Optional[int] = None):
                 """Update progress during AWS resource collection"""
-                # Update collection_progress
-                self.collection_progress.update_service(
-                    service_name, status, resource_count
-                )
-                current_time = int(self.get_elapsed_time())
-
-                # Update task status
-                self.collection_progress.update_task(
-                    f"Processing: {service_name}", time=self.get_elapsed_time()
-                )
-                progress.update(
-                    aws_task, description=f"[cyan]Processing: {service_name}"
-                )
-
-                # Only print completion messages
                 if status == "Completed":
-                    mins, secs = divmod(current_time, 60)
-                    time_str = f"{mins:02d}:{secs:02d}"
-                    console.print(
-                        f"Completed: {service_name:<30} [{time_str}]", style="green"
+                    elapsed = int(self.get_elapsed_time())
+                    mins, secs = divmod(elapsed, 60)
+                    progress.print(
+                        f"Completed: {service_name:<30} [{mins:02d}:{secs:02d}]",
+                        style="cyan"
                     )
-                # Print info messages (like EBS volume exclusions)
-                elif status.startswith("Info:"):
-                    console.print(status, style="cyan")
+                else:
+                    # Update progress
+                    progress.update(
+                        aws_task,
+                        description=f"Processing: {service_name:<30}",
+                        style="green"
+                    )
 
             # Collect AWS resources
             aws_resources = registry.collect_all(progress_callback=progress_callback)
-            console.print("[green]AWS resources detection completed")
+            progress.update(aws_task, visible=False)
 
             # Identify unmanaged resources
             analysis_task = progress.add_task(
@@ -135,7 +125,7 @@ class AWSResourceAuditor:
                 mins, secs = divmod(current_time, 60)
                 time_str = f"{mins:02d}:{secs:02d}"
                 console.print(
-                    f"Analyzed: {service_name:<30} [{time_str}]", style="yellow"
+                    f"Analyzed: {service_name} [{time_str}]", style="yellow"
                 )
 
             progress.update(analysis_task, description="[green]Analysis completed")
@@ -172,8 +162,6 @@ class AWSResourceAuditor:
         if resource.get("type") == "aws_s3_bucket":
             if "name" in resource:
                 identifiers.add(f"arn:aws:s3:::{resource['name']}")
-
-        # Add more resource type specific cases as needed
 
         return identifiers
 
