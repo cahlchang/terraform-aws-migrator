@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -9,7 +9,10 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 setup(
     name="terraform-aws-migrator",
     version="0.1.0",
-    packages=find_packages(include=['terraform_aws_migrator', 'terraform_aws_migrator.*']),
+    include_package_data=True,
+    package_data={
+        'terraform_aws_migrator': ['*', '**/*'],
+    },
     install_requires=[
         "python-hcl2",
         "boto3",
@@ -25,7 +28,7 @@ setup(
     description="A tool to migrate unmanaged AWS resources to Terraform",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/terraform-aws-migrator",
+    url="https://github.com/cahlchang/terraform-aws-migrator",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
