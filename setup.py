@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -9,15 +9,12 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 setup(
     name="terraform-aws-migrator",
     version="0.1.0",
+    packages=find_packages(include=['terraform_aws_migrator', 'terraform_aws_migrator.*']),
     include_package_data=True,
     package_data={
         'terraform_aws_migrator': ['*', '**/*'],
     },
-    install_requires=[
-        "python-hcl2",
-        "boto3",
-        "rich",
-    ],
+    install_requires=requirements,
     entry_points={
         'console_scripts': [
             'terraform_aws_migrator=terraform_aws_migrator.main:main',
