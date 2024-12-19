@@ -39,15 +39,9 @@ class ResourceCollector(ABC):
 
     @classmethod
     def get_type_display_name(cls, resource_type: str) -> str:
-        """Get the display name for a specific resource type
-
-        Args:
-            resource_type: The type identifier of the resource
-
-        Returns:
-            str: Human-readable display name for the resource type
-        """
-        return cls.get_resource_types().get(resource_type, resource_type)
+        """Get display name for a resource type"""
+        resource_types = cls.get_resource_types()
+        return resource_types.get(resource_type, resource_type)
 
     @property
     def client(self):

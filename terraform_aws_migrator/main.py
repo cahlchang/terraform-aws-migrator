@@ -8,6 +8,7 @@ from terraform_aws_migrator.auditor import AWSResourceAuditor
 from terraform_aws_migrator.formatters.output_formatter import format_output
 from terraform_aws_migrator.generators import HCLGeneratorRegistry
 
+
 def setup_logging(debug: bool = False):
     """Configure logging settings"""
     # Suppress all loggers initially
@@ -28,6 +29,7 @@ def setup_logging(debug: bool = False):
         )
 
     logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -59,17 +61,15 @@ def main():
         metavar="FILE",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    
+
     # HCL generation arguments
     parser.add_argument(
-        "--generate", 
-        action="store_true",
-        help="Generate HCL for unmanaged resources"
+        "--generate", action="store_true", help="Generate HCL for unmanaged resources"
     )
     parser.add_argument(
-        "--type", 
+        "--type",
         type=str,
-        help="Resource type to generate HCL for (e.g., aws_iam_role)"
+        help="Resource type to generate HCL for (e.g., aws_iam_role)",
     )
 
     args = parser.parse_args()
@@ -94,21 +94,23 @@ def main():
             if not args.type:
                 console.print("[red]Error: --type is required when using --generate")
                 return 1
-                
+
             if not HCLGeneratorRegistry.is_supported(args.type):
-                console.print(f"[yellow]Warning: Resource type '{args.type}' is not yet supported for HCL generation")
+                console.print(
+                    f"[yellow]Warning: Resource type '{args.type}' is not yet supported for HCL generation"
+                )
                 return 1
-                
-            # リソースタイプを指定してauditorを実行
+
             auditor = AWSResourceAuditor(
-                exclusion_file=args.ignore_file,
-                target_resource_type=args.type
+                exclusion_file=args.ignore_file, target_resource_type=args.type
             )
-            unmanaged_resources = auditor.audit_resources(args.tf_dir)
-            
-            # HCL生成
+            unmanaged_resources = auditor.audit_specific_resource(
+                args.tf_dir, args.type
+            )
+
+            # generate HCL
             generator = HCLGeneratorRegistry.get_generator(args.type)
-            
+
             for service_name, resources in unmanaged_resources.items():
                 for resource in resources:
                     hcl = generator.generate(resource)
@@ -118,23 +120,28 @@ def main():
                                 f.write(hcl + "\n\n")
                         else:
                             console.print(hcl)
-            
-            return 0
-
-        # Normal detection mode
-        auditor = AWSResourceAuditor(exclusion_file=args.ignore_file)
-        unmanaged_resources = auditor.audit_resources(args.tf_dir)
-
-        # Format and display the output
-        formatted_output = format_output(unmanaged_resources, args.output)
-
-        # Write the output
-        if args.output_file:
-            with open(args.output_file, "w") as f:
-                f.write(formatted_output)
-            console.print(f"[green]Detection results written to {args.output_file}")
         else:
-            console.print(formatted_output)
+            # 通常の検出モード
+            auditor = AWSResourceAuditor(exclusion_file=args.ignore_file)
+            unmanaged_resources = auditor.audit_all_resources(args.tf_dir)
+
+            # Format and display the output
+            formatted_output = format_output(unmanaged_resources, args.output)
+
+            if args.output_file:
+                with open(args.output_file, "w") as f:
+                    f.write(formatted_output)
+                console.print(f"[green]Detection results written to {args.output_file}")
+            else:
+                console.print(formatted_output)
+
+            # Write the output
+            if args.output_file:
+                with open(args.output_file, "w") as f:
+                    f.write(formatted_output)
+                console.print(f"[green]Detection results written to {args.output_file}")
+            else:
+                console.print(formatted_output)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Detection cancelled by user")
@@ -144,6 +151,7 @@ def main():
         return 1
 
     return 0
+
 
 if __name__ == "__main__":
     exit(main())
