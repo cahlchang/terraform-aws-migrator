@@ -27,6 +27,28 @@ class ResourceCollector(ABC):
         """Return the AWS service name for this collector"""
         raise NotImplementedError("Subclasses must implement get_service_name")
 
+    @classmethod
+    def get_resource_types(cls) -> Dict[str, str]:
+        """Return dictionary of resource types and their display names.
+
+        Returns:
+            Dict[str, str]: Mapping of resource type identifiers to human-readable names
+            Example: {"aws_iam_role": "IAM Roles"}
+        """
+        return {}
+
+    @classmethod
+    def get_type_display_name(cls, resource_type: str) -> str:
+        """Get the display name for a specific resource type
+
+        Args:
+            resource_type: The type identifier of the resource
+
+        Returns:
+            str: Human-readable display name for the resource type
+        """
+        return cls.get_resource_types().get(resource_type, resource_type)
+
     @property
     def client(self):
         if self._client is None:

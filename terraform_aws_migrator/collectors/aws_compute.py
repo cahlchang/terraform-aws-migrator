@@ -32,7 +32,7 @@ class EC2Collector(ResourceCollector):
                     for instance in reservation["Instances"]:
                         resources.append(
                             {
-                                "type": "instance",
+                                "type": "aws_instance",
                                 "id": instance["InstanceId"],
                                 "arn": self.build_arn(
                                     "instance", instance["InstanceId"]
@@ -45,7 +45,7 @@ class EC2Collector(ResourceCollector):
             for vpc in self.client.describe_vpcs()["Vpcs"]:
                 resources.append(
                     {
-                        "type": "vpc",
+                        "type": "aws_vpc",
                         "id": vpc["VpcId"],
                         "arn": self.build_arn("vpc", vpc["VpcId"]),
                         "tags": vpc.get("Tags", []),
@@ -56,7 +56,7 @@ class EC2Collector(ResourceCollector):
             for sg in self.client.describe_security_groups()["SecurityGroups"]:
                 resources.append(
                     {
-                        "type": "security-group",
+                        "type": "aws_security_group",
                         "id": sg["GroupId"],
                         "arn": self.build_arn("security-group", sg["GroupId"]),
                         "tags": sg.get("Tags", []),
@@ -67,7 +67,6 @@ class EC2Collector(ResourceCollector):
             logger.error(f"Error collecting EC2 resources: {str(e)}")
 
         return resources
-
 
 @register_collector
 class ECSCollector(ResourceCollector):

@@ -5,31 +5,33 @@ import logging
 from rich.console import Console
 from terraform_aws_migrator.utils.resource_utils import show_supported_resources
 from terraform_aws_migrator.auditor import AWSResourceAuditor
-
 from terraform_aws_migrator.formatters.output_formatter import format_output
+from terraform_aws_migrator.generators import HCLGeneratorRegistry
 
 def setup_logging(debug: bool = False):
     """Configure logging settings"""
     # Suppress all loggers initially
     logging.getLogger().setLevel(logging.WARNING)
-    
+
     # Suppress specific loggers
-    logging.getLogger('botocore').setLevel(logging.WARNING)
-    logging.getLogger('terraform_aws_migrator.collectors.base').setLevel(logging.WARNING)
-    
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("terraform_aws_migrator.collectors.base").setLevel(
+        logging.WARNING
+    )
+
     # Set debug level if requested
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
-        logging.getLogger('botocore').setLevel(logging.INFO)
-        logging.getLogger('terraform_aws_migrator.collectors.base').setLevel(logging.DEBUG)
+        logging.getLogger("botocore").setLevel(logging.INFO)
+        logging.getLogger("terraform_aws_migrator.collectors.base").setLevel(
+            logging.DEBUG
+        )
 
-    logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Migrate AWS resources that are not managed by Terraform"
+        description="Detect and migrate AWS resources that are not managed by Terraform"
     )
     parser.add_argument(
         "--tf-dir", type=str, help="Directory containing Terraform files"
@@ -49,8 +51,26 @@ def main():
     parser.add_argument(
         "--list-resources", action="store_true", help="List supported resource types"
     )
-
+    parser.add_argument(
+        "-i",
+        "--ignore-file",
+        type=str,
+        help="Path to resource exclusion file (default: .tfignore)",
+        metavar="FILE",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    
+    # HCL generation arguments
+    parser.add_argument(
+        "--generate", 
+        action="store_true",
+        help="Generate HCL for unmanaged resources"
+    )
+    parser.add_argument(
+        "--type", 
+        type=str,
+        help="Resource type to generate HCL for (e.g., aws_iam_role)"
+    )
 
     args = parser.parse_args()
     setup_logging(args.debug)
@@ -69,8 +89,40 @@ def main():
         return 1
 
     try:
-        # Run the detection
-        auditor = AWSResourceAuditor()
+        # HCL generation mode
+        if args.generate:
+            if not args.type:
+                console.print("[red]Error: --type is required when using --generate")
+                return 1
+                
+            if not HCLGeneratorRegistry.is_supported(args.type):
+                console.print(f"[yellow]Warning: Resource type '{args.type}' is not yet supported for HCL generation")
+                return 1
+                
+            # リソースタイプを指定してauditorを実行
+            auditor = AWSResourceAuditor(
+                exclusion_file=args.ignore_file,
+                target_resource_type=args.type
+            )
+            unmanaged_resources = auditor.audit_resources(args.tf_dir)
+            
+            # HCL生成
+            generator = HCLGeneratorRegistry.get_generator(args.type)
+            
+            for service_name, resources in unmanaged_resources.items():
+                for resource in resources:
+                    hcl = generator.generate(resource)
+                    if hcl:
+                        if args.output_file:
+                            with open(args.output_file, "a") as f:
+                                f.write(hcl + "\n\n")
+                        else:
+                            console.print(hcl)
+            
+            return 0
+
+        # Normal detection mode
+        auditor = AWSResourceAuditor(exclusion_file=args.ignore_file)
         unmanaged_resources = auditor.audit_resources(args.tf_dir)
 
         # Format and display the output
@@ -92,7 +144,6 @@ def main():
         return 1
 
     return 0
-
 
 if __name__ == "__main__":
     exit(main())

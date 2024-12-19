@@ -52,10 +52,10 @@ class TerraformStateReader:
                     region=s3_config.get("region", self.session.region_name),
                 )
                 if state_data:
-                    self.console.print("[green]Successfully read state from S3")
+                    self.console.print("\n[green]Successfully read state from S3")
                     self._extract_resources_from_state(state_data, managed_resources)
 
-            self.console.print(f"[green]Total managed resources found: {len(managed_resources)}")
+            self.console.print(f"\n[green]Total managed resources found: {len(managed_resources)}")
             return managed_resources
         except Exception as e:
             self.console.print(f"[red]Error reading Terraform state: {str(e)}")
