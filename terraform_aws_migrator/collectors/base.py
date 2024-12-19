@@ -1,7 +1,7 @@
 # terraform_aws_migrator/collectors/base.py
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Callable, Optional
+from typing import Dict, List, Any, Callable, Optional, Iterator
 import boto3
 import logging
 
@@ -80,34 +80,53 @@ class ResourceRegistry:
     """Registry for resource collectors"""
 
     def __init__(self):
-        self._collectors: Dict[str, ResourceCollector] = {}
+        self._collector_classes = []
 
     def register(self, collector_class: type):
         """Register a collector class"""
         try:
-            collector = collector_class()
-            self._collectors[collector.get_service_name()] = collector
+            self._collector_classes.append(collector_class)
         except Exception as e:
             logger.error(
                 f"Failed to register collector {collector_class.__name__}: {str(e)}"
             )
 
+    def __iter__(self) -> Iterator[type]:
+        """Make the registry iterable to return collector classes"""
+        return iter(self._collector_classes)
+
+    def __len__(self) -> int:
+        """Return the number of registered collector classes"""
+        return len(self._collector_classes)
+
     def collect_all(
         self,
+        session: boto3.Session,
         progress_callback: Optional[Callable[[str, str, Optional[int]], None]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Collect resources from all registered collectors
 
         Args:
+            session: boto3.Session to use for AWS API calls
             progress_callback: Callback function that takes (service_name, status, resource_count)
 
         Returns:
             Dict[str, List[Dict[str, Any]]]: Resources grouped by service
         """
         results = {}
-        for service_name, collector in self._collectors.items():
+        processed_services = set()
+
+        for collector_class in self._collector_classes:
             try:
+                collector = collector_class(session)
+                service_name = collector.get_service_name()
+
+                # Skip if we've already processed this service
+                if service_name in processed_services:
+                    continue
+                processed_services.add(service_name)
+
                 if progress_callback:
                     progress_callback(service_name, "Starting", None)
 
@@ -117,14 +136,14 @@ class ResourceRegistry:
                 if progress_callback:
                     progress_callback(service_name, "Completed", len(resources))
 
-                results[service_name] = resources
+                if resources:
+                    results[service_name] = resources
 
             except Exception as e:
                 error_msg = f"Error collecting {service_name} resources: {str(e)}"
                 logger.error(error_msg)
                 if progress_callback:
                     progress_callback(service_name, "Failed", 0)
-                results[service_name] = []
 
         return results
 

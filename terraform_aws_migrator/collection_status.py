@@ -1,76 +1,67 @@
 # terraform_aws_migrator/collection_status.py
 
-from typing import Optional
+from typing import Dict, List, Any
+from dataclasses import dataclass
 from datetime import datetime
-from rich.table import Table
-from rich.text import Text
-from rich import box
 
 
+@dataclass
 class CollectionStatus:
+    """Track the status of resource collection"""
+
+    service: str
+    status: str
+    start_time: datetime
+    end_time: datetime = None
+
+    @property
+    def duration(self) -> str:
+        """Format duration as [MM:SS]"""
+        if not self.end_time:
+            duration = datetime.now() - self.start_time
+        else:
+            duration = self.end_time - self.start_time
+
+        total_seconds = int(duration.total_seconds())
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        return f"[{minutes:02d}:{seconds:02d}]"
+
+
+class StatusTracker:
+    """Track collection status across multiple services"""
+
     def __init__(self):
-        self.services_status = {}
-        self.current_task = ""
-        self.current_file = ""
-        self.elapsed_time = 0.0
+        self.statuses: Dict[str, CollectionStatus] = {}
 
-    def update_task(self, task: str, file: str = "", time: float = 0.0):
-        self.current_task = task
-        self.current_file = file
-        self.elapsed_time = time
-
-    def update_service(
-        self, service_name: str, status: str, resource_count: Optional[int] = None
-    ):
-        self.services_status[service_name] = {
-            "status": status,
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "resource_count": resource_count,
-        }
-
-    def get_progress_text(self) -> Text:
-        text = Text()
-        if self.current_task:
-            mins, secs = divmod(int(self.elapsed_time), 60)
-            if mins > 0:
-                time_str = f"{mins}m {secs}s"
-            else:
-                time_str = f"{secs}s"
-
-            text.append(f"[→] ", style="bold yellow")
-            text.append(f"{self.current_task} ", style="bold white")
-            text.append(f"({time_str})", style="cyan")
-        return text
-
-    def get_table(self) -> Table:
-        table = Table(
-            show_header=True,
-            header_style="bold cyan",
-            box=box.SIMPLE,
-            title=None,
-            collapse_padding=True,
-            pad_edge=False,
-            width=60,
+    def start_collection(self, service: str):
+        """Record the start of collection for a service"""
+        self.statuses[service] = CollectionStatus(
+            service=service, status="Processing", start_time=datetime.now()
         )
 
-        # compact column style
-        table.add_column("Service", style="bold", width=15)
-        table.add_column("Status", style="cyan", width=12)
-        table.add_column("Resources", justify="right", width=10)
+    def complete_collection(self, service: str, success: bool = True):
+        """Record the completion of collection for a service"""
+        if service in self.statuses:
+            status = self.statuses[service]
+            status.status = "Completed" if success else "Failed"
+            status.end_time = datetime.now()
 
-        # add dataset
-        for service, info in self.services_status.items():
-            status_style = "green" if info["status"] == "Completed" else "yellow"
-            resource_count = (
-                str(info["resource_count"])
-                if info["resource_count"] is not None
-                else "-"
+    def get_progress_data(self) -> List[Dict[str, Any]]:
+        """Get formatted progress data for all services"""
+        progress_data = []
+        for status in self.statuses.values():
+            progress_data.append(
+                {
+                    "service": status.service,
+                    "status": status.status,
+                    "time": status.duration,
+                }
             )
+        return sorted(
+            progress_data, key=lambda x: (x["status"] != "Processing", x["service"])
+        )
 
-            table.add_row(
-                service,
-                f"[{status_style}]{info['status']}[/{status_style}]",
-                resource_count,
-            )
 
-        return table
+# Ensure the class is properly exported
+__all__ = ["StatusTracker", "CollectionStatus"]

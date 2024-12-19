@@ -26,24 +26,36 @@ class TerraformStateReader:
         managed_resources = set()
         tf_dir_path = Path(tf_dir)
         try:
-            # First check S3 backend
+            # Add debug logging
+            self.console.print(f"[blue]Scanning directory for Terraform files: {tf_dir_path}")
+
+            # First check local state files
+            state_files = list(tf_dir_path.rglob("*.tfstate"))
+            self.console.print(f"[blue]Found local state files: {[str(f) for f in state_files]}")
+
+            for state_file in state_files:
+                self.console.print(f"[blue]Reading state file: {state_file}")
+                state_data = self._read_local_state(state_file)
+                if state_data:
+                    self.console.print(f"[green]Successfully read state file: {state_file}")
+                    self._extract_resources_from_state(state_data, managed_resources)
+                else:
+                    self.console.print(f"[yellow]Unable to read state file: {state_file}")
+
+            # Then check S3 backend
             s3_config = self._find_s3_backend(tf_dir_path)
-            if s3_config and progress:
+            if s3_config:
+                self.console.print(f"[blue]Found S3 backend configuration: {s3_config}")
                 state_data = self._get_s3_state(
                     bucket=s3_config["bucket"],
                     key=s3_config["key"],
                     region=s3_config.get("region", self.session.region_name),
                 )
                 if state_data:
+                    self.console.print("[green]Successfully read state from S3")
                     self._extract_resources_from_state(state_data, managed_resources)
 
-            # Then check local state files
-            state_files = list(Path(tf_dir).rglob("*.tfstate"))
-            for state_file in state_files:
-                state_data = self._read_local_state(state_file)
-                if state_data:
-                    self._extract_resources_from_state(state_data, managed_resources)
-
+            self.console.print(f"[green]Total managed resources found: {len(managed_resources)}")
             return managed_resources
         except Exception as e:
             self.console.print(f"[red]Error reading Terraform state: {str(e)}")
