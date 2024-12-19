@@ -19,7 +19,6 @@ class EC2Collector(ResourceCollector):
             "aws_instance": "EC2 Instances",
             "aws_vpc": "Virtual Private Clouds",
             "aws_security_group": "Security Groups",
-            "aws_ebs_volume": "EBS Volumes"
         }
 
     def collect(self) -> List[Dict[str, Any]]:
@@ -33,7 +32,7 @@ class EC2Collector(ResourceCollector):
                     for instance in reservation["Instances"]:
                         resources.append(
                             {
-                                "type": "instance",
+                                "type": "aws_instance",
                                 "id": instance["InstanceId"],
                                 "arn": self.build_arn(
                                     "instance", instance["InstanceId"]
@@ -46,7 +45,7 @@ class EC2Collector(ResourceCollector):
             for vpc in self.client.describe_vpcs()["Vpcs"]:
                 resources.append(
                     {
-                        "type": "vpc",
+                        "type": "aws_vpc",
                         "id": vpc["VpcId"],
                         "arn": self.build_arn("vpc", vpc["VpcId"]),
                         "tags": vpc.get("Tags", []),
@@ -57,31 +56,17 @@ class EC2Collector(ResourceCollector):
             for sg in self.client.describe_security_groups()["SecurityGroups"]:
                 resources.append(
                     {
-                        "type": "security-group",
+                        "type": "aws_security_group",
                         "id": sg["GroupId"],
                         "arn": self.build_arn("security-group", sg["GroupId"]),
                         "tags": sg.get("Tags", []),
                     }
                 )
 
-            # EBS Volumes
-            paginator = self.client.get_paginator("describe_volumes")
-            for page in paginator.paginate():
-                for volume in page["Volumes"]:
-                    resources.append(
-                        {
-                            "type": "volume",
-                            "id": volume["VolumeId"],
-                            "arn": self.build_arn("volume", volume["VolumeId"]),
-                            "tags": volume.get("Tags", []),
-                        }
-                    )
-
         except Exception as e:
             logger.error(f"Error collecting EC2 resources: {str(e)}")
 
         return resources
-
 
 @register_collector
 class ECSCollector(ResourceCollector):
@@ -91,11 +76,7 @@ class ECSCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {
-            "aws_ecs_cluster": "ECS Clusters",
-            "aws_ecs_service": "ECS Services"
-        }
-
+        return {"aws_ecs_cluster": "ECS Clusters", "aws_ecs_service": "ECS Services"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []
@@ -150,9 +131,7 @@ class LambdaCollector(ResourceCollector):
 
     @classmethod
     def get_resource_types(self) -> Dict[str, str]:
-        return {
-            "aws_lambda_function": "Lambda Functions"
-        }
+        return {"aws_lambda_function": "Lambda Functions"}
 
     def collect(self) -> List[Dict[str, Any]]:
         resources = []

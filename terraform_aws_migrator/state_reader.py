@@ -25,36 +25,41 @@ class TerraformStateReader:
         """Get all ARNs of resources managed by Terraform from state files"""
         managed_resources = set()
         tf_dir_path = Path(tf_dir)
+        try:
+            # Add debug logging
+            self.console.print(f"[blue]Scanning directory for Terraform files: {tf_dir_path}")
 
-        # First check S3 backend
-        s3_config = self._find_s3_backend(tf_dir_path)
-        if s3_config and progress:
-            progress.update(
-                0,
-                description=f"[cyan]Reading state from S3: {s3_config['bucket']}/{s3_config['key']}",
-            )
-            state_data = self._get_s3_state(
-                bucket=s3_config["bucket"],
-                key=s3_config["key"],
-                region=s3_config.get("region", self.session.region_name),
-            )
-            if state_data:
-                self._extract_resources_from_state(state_data, managed_resources)
+            # First check local state files
+            state_files = list(tf_dir_path.rglob("*.tfstate"))
+            self.console.print(f"[blue]Found local state files: {[str(f) for f in state_files]}")
 
-        # Then check local state files
-        state_files = list(tf_dir_path.glob("**/*.tfstate"))
-        if state_files and progress:
-            task_id = progress.add_task(
-                "[cyan]Reading local state files...", total=len(state_files)
-            )
             for state_file in state_files:
-                progress.update(task_id, description=f"[cyan]Reading {state_file.name}")
+                self.console.print(f"[blue]Reading state file: {state_file}")
                 state_data = self._read_local_state(state_file)
                 if state_data:
+                    self.console.print(f"[green]Successfully read state file: {state_file}")
                     self._extract_resources_from_state(state_data, managed_resources)
-                progress.update(task_id, advance=1)
+                else:
+                    self.console.print(f"[yellow]Unable to read state file: {state_file}")
 
-        return managed_resources
+            # Then check S3 backend
+            s3_config = self._find_s3_backend(tf_dir_path)
+            if s3_config:
+                self.console.print(f"[blue]Found S3 backend configuration: {s3_config}")
+                state_data = self._get_s3_state(
+                    bucket=s3_config["bucket"],
+                    key=s3_config["key"],
+                    region=s3_config.get("region", self.session.region_name),
+                )
+                if state_data:
+                    self.console.print("\n[green]Successfully read state from S3")
+                    self._extract_resources_from_state(state_data, managed_resources)
+
+            self.console.print(f"\n[green]Total managed resources found: {len(managed_resources)}")
+            return managed_resources
+        except Exception as e:
+            self.console.print(f"[red]Error reading Terraform state: {str(e)}")
+            return set()
 
     def get_s3_state_file(
         self, bucket: str, key: str, region: str, progress=None

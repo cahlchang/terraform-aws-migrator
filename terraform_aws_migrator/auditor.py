@@ -1,33 +1,53 @@
 # terraform_aws_migrator/auditor.py
 
-import json
 import time
-from pathlib import Path
-from typing import Dict, List, Set, Any, Optional
+from typing import Dict, List, Set, Any
 import boto3
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    ProgressColumn,
+    Task,
+)
+from rich.text import Text
 
 from terraform_aws_migrator.collectors.base import registry
-from terraform_aws_migrator.collection_status import CollectionStatus
 from terraform_aws_migrator.state_reader import TerraformStateReader
+from terraform_aws_migrator.exclusion import ResourceExclusionConfig
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class CompactTimeColumn(ProgressColumn):
+    """Custom time column that displays elapsed time in a compact format"""
+
+    def __init__(self):
+        super().__init__()
+        self.start_time = time.time()
+
+    def render(self, task: "Task") -> Text:
+        """Render the time column."""
+        elapsed = int(time.time() - self.start_time)
+        minutes = elapsed // 60
+        seconds = elapsed % 60
+        return Text(f"[{minutes:02d}:{seconds:02d}]")
 
 
 class AWSResourceAuditor:
     """Main class for detecting unmanaged AWS resources"""
-
-    def __init__(self):
+    
+    def __init__(self, exclusion_file: str = None, target_resource_type: str = None):
         self.session = boto3.Session()
         self.state_reader = TerraformStateReader(self.session)
         self.console = Console()
-        self.collection_progress = CollectionStatus()
         self.start_time = None
-
-    def get_elapsed_time(self) -> float:
-        """Get elapsed time since audit started"""
-        if self.start_time is None:
-            return 0.0
-        return time.time() - self.start_time
+        self.exclusion_config = ResourceExclusionConfig(exclusion_file)
+        self.target_resource_type = target_resource_type
+        self.resource_type_mappings = {}
 
     def get_terraform_managed_resources(self, tf_dir: str, progress=None) -> Set[str]:
         """Get set of resource identifiers managed by Terraform"""
@@ -36,112 +56,254 @@ class AWSResourceAuditor:
                 tf_dir, progress
             )
             self.console.print(
-                f"[green]Found {len(managed_resources)} managed resources in Terraform state"
+                f"[cyan]Found {len(managed_resources)} managed resources in Terraform state"
             )
             return managed_resources
         except Exception as e:
             self.console.print(f"[red]Error reading Terraform state: {str(e)}")
             return set()
 
-    def audit_resources(self, tf_dir: str) -> Dict[str, List[Dict[str, Any]]]:
+ 
+ 
+    def _get_relevant_collectors(self):
+        """Get collectors based on target_resource_type"""
+        collectors = registry.get_collectors(self.session)
+        
+        if not self.target_resource_type:
+            logger.debug(f"Getting all collectors: {len(collectors)}")
+            return collectors
+
+        service_name = self.target_resource_type.split('_')[1]
+        logger.debug(f"Looking for collectors for service: {service_name}")
+        
+        # First collect all resource types from relevant collectors
+        for collector in collectors:
+            logger.debug(f"Checking collector: {collector.__class__.__name__}")
+            if collector.get_service_name() == service_name:
+                self.resource_type_mappings.update(collector.get_resource_types())
+                logger.debug(f"Updated mappings from {collector.__class__.__name__}: {collector.get_resource_types()}")
+        
+        relevant_collectors = [
+            collector for collector in collectors
+            if collector.get_service_name() == service_name
+        ]
+        logger.debug(f"Found relevant collectors: {[c.__class__.__name__ for c in relevant_collectors]}")
+        
+        return relevant_collectors
+
+    def audit_specific_resource(self, tf_dir: str, target_resource_type: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Detect specific AWS resources that are not managed by Terraform"""
+        self.target_resource_type = target_resource_type
+        logger.debug(f"Starting audit for resource type: {target_resource_type}")
+        
+        self.start_time = time.time()
+        unmanaged_resources = {}
+        resource_counts = {}
+
+        def get_elapsed_time() -> str:
+            elapsed = int(time.time() - self.start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            return f"[{minutes:02d}:{seconds:02d}]"
+
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("{task.description}", style="bold blue"),
+            CompactTimeColumn(),
+            console=self.console,
+            expand=False,
+            refresh_per_second=10,
+        )
+
+        with progress:
+            # Get Terraform managed resources
+            tf_task = progress.add_task("[cyan]Reading Terraform state...", total=None)
+            managed_resources = self.get_terraform_managed_resources(tf_dir, progress)
+            progress.update(tf_task, completed=True)
+            self.console.print(
+                f"[green]Found {len(managed_resources)} managed resources in Terraform state {get_elapsed_time()}"
+            )
+
+            # Get collectors first to populate resource_type_mappings
+            collectors = self._get_relevant_collectors()
+            
+            # Get related resource types
+            base_resource = self.target_resource_type.split('_')[-1]
+            related_types = [
+                rtype for rtype in self.resource_type_mappings.keys()
+                if f"_{base_resource}" in rtype or
+                   f"{base_resource}_policy" in rtype or
+                   f"{base_resource}_policy_attachment" in rtype
+            ]
+            
+            # Display what we're collecting
+            self.console.print(f"[cyan]Collecting {', '.join(related_types)}...")
+
+            aws_task = progress.add_task("[cyan]Collecting AWS resources...", total=None)
+
+            # Process each collector
+            for collector in collectors:
+                service_name = collector.get_service_name()
+                logger.debug(f"Processing collector for service: {service_name}")
+                try:
+                    resources = collector.collect()
+                    logger.debug(f"Collected {len(resources)} resources from {service_name}")
+                    
+                    for resource in resources:
+                        logger.debug(f"Resource found: {resource.get('type')} - {resource.get('id')}")
+
+                    unmanaged = self._filter_unmanaged_resources(resources, managed_resources)
+                    logger.debug(f"Found {len(unmanaged)} unmanaged resources for {service_name}")
+
+                    if unmanaged:
+                        if service_name not in unmanaged_resources:
+                            unmanaged_resources[service_name] = []
+                        unmanaged_resources[service_name].extend(unmanaged)
+
+                        # Group by resource type for summary
+                        for resource in unmanaged:
+                            resource_type = resource.get("type", "unknown")
+                            if resource_type not in resource_counts:
+                                resource_counts[resource_type] = []
+                            resource_counts[resource_type].append(resource)
+
+                except Exception as e:
+                    logger.error(f"Error collecting {service_name} resources: {str(e)}")
+                    self.console.print(f"[red]Error collecting {service_name} resources: {str(e)}")
+
+            # Display summary for each related resource type
+            for resource_type, resources in resource_counts.items():
+                display_name = self.resource_type_mappings.get(resource_type, resource_type)
+                for resource in resources:
+                    self.console.print(
+                        f"[green]Found unmanaged {display_name}: {resource.get('id')} {get_elapsed_time()}"
+                    )
+
+            progress.update(aws_task, completed=True)
+
+        total_time = int(time.time() - self.start_time)
+        minutes = total_time // 60
+        seconds = total_time % 60
+        self.console.print(f"\n[green]Total execution time: [{minutes:02d}:{seconds:02d}]")
+        
+        return unmanaged_resources
+
+
+    def audit_all_resources(self, tf_dir: str) -> Dict[str, List[Dict[str, Any]]]:
         """Detect AWS resources that are not managed by Terraform"""
         self.start_time = time.time()
+        unmanaged_resources = {}
 
-        # Create console for progress display
-        console = Console()
+        def get_elapsed_time() -> str:
+            """Get elapsed time in [MM:SS] format"""
+            elapsed = int(time.time() - self.start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            return f"[{minutes:02d}:{seconds:02d}]"
 
-        with Progress(
+        progress = Progress(
             SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=console,
-            transient=True
-        ) as progress:
+            TextColumn("{task.description}", style="bold blue"),
+            CompactTimeColumn(),
+            console=self.console,
+            expand=False,
+            refresh_per_second=10,
+        )
+
+        with progress:
             # Get Terraform managed resources
             tf_task = progress.add_task(
-                "[yellow]Detecting Terraform managed resources...", total=None
+                "[yellow]Reading Terraform state...", total=None
+            )
+            managed_resources = self.get_terraform_managed_resources(tf_dir, progress)
+            progress.update(tf_task, completed=True)
+            self.console.print(
+                f"Found {len(managed_resources)} managed resources in Terraform state {get_elapsed_time()}"
             )
 
-            tf_resources = self.get_terraform_managed_resources(tf_dir, progress)
+            # Initialize collectors
+            collectors = [collector_cls(self.session) for collector_cls in registry]
 
-            # Collect current AWS resources
-            aws_task = progress.add_task("[cyan]Detecting AWS resources...", total=None)
+            # Add main AWS resource collection task
+            aws_task = progress.add_task(
+                "[cyan]Collecting AWS resources...", total=None
+            )
 
-            def progress_callback(
-                service_name: str, status: str, resource_count: Optional[int] = None
-            ):
-                """Update progress during AWS resource collection"""
-                # Update collection_progress
-                self.collection_progress.update_service(
-                    service_name, status, resource_count
-                )
-                current_time = int(self.get_elapsed_time())
-
-                # Update task status
-                self.collection_progress.update_task(
-                    f"Processing: {service_name}", time=self.get_elapsed_time()
-                )
-                progress.update(
-                    aws_task, description=f"[cyan]Processing: {service_name}"
-                )
-
-                # Only print completion messages
-                if status == "Completed":
-                    mins, secs = divmod(current_time, 60)
-                    time_str = f"{mins:02d}:{secs:02d}"
-                    console.print(
-                        f"Completed: {service_name:<30} [{time_str}]", style="green"
+            # Process each collector
+            for collector in collectors:
+                service_name = collector.get_service_name()
+                try:
+                    # Update progress description
+                    resource_types = collector.get_resource_types()
+                    resource_type_names = ", ".join(resource_types.values())
+                    progress.update(
+                        aws_task,
+                        description=f"[cyan]Collecting {resource_type_names}...",
                     )
-                # Print info messages (like EBS volume exclusions)
-                elif status.startswith("Info:"):
-                    console.print(status, style="cyan")
 
-            # Collect AWS resources
-            aws_resources = registry.collect_all(progress_callback=progress_callback)
-            console.print("[green]AWS resources detection completed")
+                    # Collect resources
+                    resources = collector.collect()
+                    # Filter unmanaged resources
+                    unmanaged = self._filter_unmanaged_resources(
+                        resources, managed_resources
+                    )
 
-            # Identify unmanaged resources
-            analysis_task = progress.add_task(
-                "[cyan]Identifying unmanaged resources...", total=None
-            )
-            unmanaged_resources = {}
+                    if unmanaged:
+                        type_groups = {}
+                        for resource in unmanaged:
+                            resource_type = resource.get("type", "unknown")
+                            if resource_type not in type_groups:
+                                type_groups[resource_type] = []
+                            type_groups[resource_type].append(resource)
 
-            for service_name, resources in aws_resources.items():
-                progress.update(
-                    analysis_task,
-                    description=f"[cyan]Analyzing {service_name} resources...",
-                )
-                unmanaged = []
+                        for resource_type, resources_list in type_groups.items():
+                            display_name = collector.get_type_display_name(
+                                resource_type
+                            )
+                            self.console.print(
+                                f"[green]Found {len(resources_list)} unmanaged {display_name} {get_elapsed_time()}"
+                            )
 
-                for resource in resources:
-                    # Get resource identifiers
-                    identifiers = self._get_resource_identifiers(resource)
+                        # unmanaged_resourcesに追加
+                        if service_name not in unmanaged_resources:
+                            unmanaged_resources[service_name] = []
+                        unmanaged_resources[service_name].extend(unmanaged)
 
-                    # Check if any identifier is in tf_resources
-                    if not any(
-                        identifier in tf_resources for identifier in identifiers
-                    ):
-                        unmanaged.append(resource)
+                except Exception as e:
+                    self.console.print(
+                        f"[red]Error collecting {service_name} resources: {str(e)}"
+                    )
 
-                if unmanaged:
-                    unmanaged_resources[service_name] = unmanaged
+            # Complete the collection task
+            progress.update(aws_task, completed=True)
 
-                # Update progress
-                self.collection_progress.update_service(
-                    service_name, "Analyzed", len(unmanaged) if unmanaged else 0
-                )
-
-                current_time = int(self.get_elapsed_time())
-                mins, secs = divmod(current_time, 60)
-                time_str = f"{mins:02d}:{secs:02d}"
-                console.print(
-                    f"Analyzed: {service_name:<30} [{time_str}]", style="yellow"
-                )
-
-            progress.update(analysis_task, description="[green]Analysis completed")
-            console.print("[green]Analysis completed")
+        # Display total execution time
+        total_time = int(time.time() - self.start_time)
+        minutes = total_time // 60
+        seconds = total_time % 60
+        self.console.print(
+            f"\n[green]Total execution time: [{minutes:02d}:{seconds:02d}]"
+        )
 
         return unmanaged_resources
+
+    def _filter_unmanaged_resources(
+        self, resources: List[Dict[str, Any]], managed_resources: Set[str]
+    ) -> List[Dict[str, Any]]:
+        """Filter out resources that are managed by Terraform or explicitly excluded"""
+        unmanaged = []
+        for resource in resources:
+            identifiers = self._get_resource_identifiers(resource)
+            if not any(identifier in managed_resources for identifier in identifiers):
+                # Check if resource should be excluded
+                if not self.exclusion_config.should_exclude(resource):
+                    # If target_resource_type is specified, only include matching resources
+                    if self.target_resource_type:
+                        if resource.get("type") == self.target_resource_type:
+                            unmanaged.append(resource)
+                    else:
+                        unmanaged.append(resource)
+        return unmanaged
 
     def _get_resource_identifiers(self, resource: Dict[str, Any]) -> Set[str]:
         """Get all possible identifiers for a resource"""
@@ -158,143 +320,4 @@ class AWSResourceAuditor:
             if "type" in resource:
                 identifiers.add(f"{resource['type']}:{resource['id']}")
 
-        # Add any additional identifiers specific to the resource type
-        additional_identifiers = self._get_additional_identifiers(resource)
-        identifiers.update(additional_identifiers)
-
         return identifiers
-
-    def _get_additional_identifiers(self, resource: Dict[str, Any]) -> Set[str]:
-        """Get additional identifiers specific to resource type"""
-        identifiers = set()
-
-        # Add resource-type specific identifiers
-        if resource.get("type") == "aws_s3_bucket":
-            if "name" in resource:
-                identifiers.add(f"arn:aws:s3:::{resource['name']}")
-
-        # Add more resource type specific cases as needed
-
-        return identifiers
-
-    def _process_state_file(
-        self, state_file: Path, managed_resources: Set[str]
-    ) -> None:
-        """Process a local Terraform state file and extract ARNs"""
-        try:
-            with open(state_file) as f:
-                state_data = json.load(f)
-                self._process_state_data(state_data, managed_resources)
-        except Exception as e:
-            self.console.print(
-                f"[yellow]Error processing Terraform state file {state_file}: {str(e)}"
-            )
-
-    def _process_state_data(
-        self, state_data: Dict[str, Any], managed_resources: Set[str]
-    ) -> None:
-        """Process Terraform state data and extract ARNs, including modules"""
-        # Process root level resources
-        for resource in state_data.get("resources", []):
-            # Skip data sources
-            if resource.get("mode") == "data":
-                continue
-
-            # Process module resources
-            if resource.get("module"):
-                self._process_module_resource(resource, managed_resources)
-            else:
-                self._process_resource(resource, managed_resources)
-
-    def _process_module_resource(
-        self, resource: Dict[str, Any], managed_resources: Set[str]
-    ) -> None:
-        """Process a module resource and extract ARNs"""
-        module_path = resource.get("module", "")
-
-        try:
-            for instance in resource.get("instances", []):
-                if "attributes" in instance:
-                    attributes = instance["attributes"]
-                    if "arn" in attributes:
-                        arn = attributes["arn"]
-                        managed_resources.add(arn)
-                    self._extract_nested_arns(attributes, managed_resources)
-        except Exception as e:
-            self.console.print(
-                f"[yellow]Error processing module {module_path}: {str(e)}"
-            )
-
-    def _process_resource(
-        self, resource: Dict[str, Any], managed_resources: Set[str]
-    ) -> None:
-        """Process a root level resource and extract ARNs"""
-        try:
-            resource_type = (
-                f"{resource.get('type', 'unknown')}.{resource.get('name', 'unknown')}"
-            )
-
-            for instance in resource.get("instances", []):
-                if "attributes" in instance:
-                    attributes = instance["attributes"]
-
-                    if "arn" in attributes:
-                        arn = attributes["arn"]
-                        managed_resources.add(arn)
-
-                    if "id" in attributes and not "arn" in attributes:
-                        resource_id = attributes["id"]
-                        constructed_arn = self._construct_arn_from_id(
-                            resource_type, resource_id
-                        )
-                        if constructed_arn:
-                            managed_resources.add(constructed_arn)
-                            self.console.print(
-                                f"[cyan]Constructed ARN for {resource_type}: {constructed_arn}"
-                            )
-
-                    self._extract_nested_arns(attributes, managed_resources)
-        except Exception as e:
-            self.console.print(
-                f"[yellow]Error processing resource {resource.get('type', 'unknown')}: {str(e)}"
-            )
-
-    def _extract_nested_arns(self, attributes: Dict[str, Any], arns: Set[str]) -> None:
-        """Recursively extract ARNs from nested attribute structures"""
-        for key, value in attributes.items():
-            if isinstance(value, str) and ":arn:" in value:
-                arns.add(value)
-            elif isinstance(value, dict):
-                self._extract_nested_arns(value, arns)
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, dict):
-                        self._extract_nested_arns(item, arns)
-
-    def _construct_arn_from_id(
-        self, resource_type: str, resource_id: str
-    ) -> Optional[str]:
-        """Construct ARN from resource type and ID when ARN is not directly available"""
-        if resource_type.startswith("aws_"):
-            resource_type = resource_type[4:]
-
-        arn_patterns = {
-            "security_group": "arn:aws:ec2:{region}:{account}:security-group/{id}",
-            "subnet": "arn:aws:ec2:{region}:{account}:subnet/{id}",
-            "vpc": "arn:aws:ec2:{region}:{account}:vpc/{id}",
-            "route_table": "arn:aws:ec2:{region}:{account}:route-table/{id}",
-            "internet_gateway": "arn:aws:ec2:{region}:{account}:internet-gateway/{id}",
-            "nat_gateway": "arn:aws:ec2:{region}:{account}:nat-gateway/{id}",
-            "network_interface": "arn:aws:ec2:{region}:{account}:network-interface/{id}",
-        }
-
-        base_type = resource_type.split(".")[-1]
-        if base_type in arn_patterns:
-            pattern = arn_patterns[base_type]
-            return pattern.format(
-                region=self.session.region_name,
-                account=self.session.client("sts").get_caller_identity()["Account"],
-                id=resource_id,
-            )
-
-        return None
