@@ -1,15 +1,14 @@
-# terraform_aws_migrator/generators/iam_role.py
+# terraform_aws_migrator/generators/aws_iam/role.py
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import json
 import logging
-from terraform_aws_migrator.generators.base import HCLGenerator, register_generator
+from ..base import HCLGenerator, register_generator
 
 logger = logging.getLogger(__name__)
 
-
 @register_generator
-class IAMGroupGenerator(HCLGenerator):
+class IAMRoleGenerator(HCLGenerator):
     """Generator for aws_iam_role resources"""
 
     @classmethod
@@ -18,31 +17,68 @@ class IAMGroupGenerator(HCLGenerator):
 
     def generate(self, resource: Dict[str, Any]) -> Optional[str]:
         try:
-            role_name = resource.get("id")
-            assume_policy = resource.get("details", {}).get("assume_role_policy", "{}")
-            description = resource.get("details", {}).get("description", "")
-            tags = resource.get("tags", {})
+            # Buffer to store all HCL blocks
+            hcl_blocks = []
+            
+            # Generate main role HCL
+            if resource["type"] == "aws_iam_role":
+                role_name = resource.get("id")
+                details = resource.get("details", {})
+                
+                role_hcl = [
+                    f'resource "aws_iam_role" "{role_name}" {{',
+                    f'  name = "{role_name}"'
+                ]
 
-            hcl = [
-                f'resource "aws_iam_role" "{role_name}" {{',
-                f'  name = "{role_name}"',
-            ]
+                if details.get("path"):
+                    role_hcl.append(f'  path = "{details["path"]}"')
 
-            if description:
-                hcl.append(f'  description = "{description}"')
+                assume_role_policy = details.get("assume_role_policy", {})
+                role_hcl.append(f"  assume_role_policy = jsonencode({json.dumps(assume_role_policy, indent=2)})")
 
-            hcl.append(f"  assume_role_policy = jsonencode({assume_policy})")
+                tags = resource.get("tags", {})
+                if tags:
+                    role_hcl.append("  tags = {")
+                    for tag in tags:
+                        key = tag.get("Key", "").replace('"', '\\"')
+                        value = tag.get("Value", "").replace('"', '\\"')
+                        role_hcl.append(f'    "{key}" = "{value}"')
+                    role_hcl.append("  }")
 
-            if tags:
-                hcl.append("  tags = {")
-                for key, value in tags.items():
-                    hcl.append(f'    {key} = "{value}"')
-                hcl.append("  }")
+                role_hcl.append("}")
+                hcl_blocks.append("\n".join(role_hcl))
 
-            hcl.append("}")
+            # Generate inline policy HCL
+            elif resource["type"] == "aws_iam_role_policy":
+                role_name = resource.get("role_name")
+                policy_name = resource.get("policy_name")
+                policy_doc = resource.get("policy_document")
 
-            return "\n".join(hcl)
+                policy_hcl = [
+                    f'resource "aws_iam_role_policy" "{role_name}_{policy_name}" {{',
+                    f'  name = "{policy_name}"',
+                    f'  role = "{role_name}"',
+                    f'  policy = jsonencode({json.dumps(policy_doc, indent=2)})',
+                    "}"
+                ]
+                hcl_blocks.append("\n".join(policy_hcl))
+
+            # Generate policy attachment HCL
+            elif resource["type"] == "aws_iam_role_policy_attachment":
+                role_name = resource.get("role_name")
+                policy_arn = resource.get("policy_arn")
+                policy_name = policy_arn.split("/")[-1]
+
+                attachment_hcl = [
+                    f'resource "aws_iam_role_policy_attachment" "{role_name}_{policy_name}" {{',
+                    f'  role       = "{role_name}"',
+                    f'  policy_arn = "{policy_arn}"',
+                    "}"
+                ]
+                hcl_blocks.append("\n".join(attachment_hcl))
+
+            return "\n\n".join(hcl_blocks)
 
         except Exception as e:
-            logger.error(f"Error generating HCL for IAM role: {str(e)}")
+            logger.error(f"Error generating HCL for IAM role resources: {str(e)}")
             return None

@@ -107,7 +107,6 @@ def main():
             unmanaged_resources = auditor.audit_specific_resource(
                 args.tf_dir, args.type
             )
-
             # generate HCL
             generator = HCLGeneratorRegistry.get_generator(args.type)
 
@@ -121,7 +120,7 @@ def main():
                         else:
                             console.print(hcl)
         else:
-            # 通常の検出モード
+            # Normal mode
             auditor = AWSResourceAuditor(exclusion_file=args.ignore_file)
             unmanaged_resources = auditor.audit_all_resources(args.tf_dir)
 

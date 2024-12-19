@@ -39,17 +39,21 @@ class IAMRoleCollector(ResourceCollector):
                 if not any(rule(role["RoleName"]) for rule in self.get_excluded_rules()):
                     try:
                         tags = self.client.list_role_tags(RoleName=role["RoleName"])["Tags"]
-                        resource_id = role["Arn"].split("/")[-1]
+                        resource_id = role["RoleName"]
                         resources.append({
                             "type": "aws_iam_role",
                             "id": resource_id,
                             "arn": role["Arn"],
                             "tags": tags,
+                            "details": {
+                                "path": role.get("Path"),
+                                "assume_role_policy": role.get("AssumeRolePolicyDocument", {}),
+                            }
                         })
-                        logger.debug(f"Collected IAM role: {resource_id}, ARN: {role['Arn']}")
                     except Exception as e:
-                        logger.error(f"Error collecting tags for role {role['RoleName']}: {str(e)}")
+                        logger.error(f"Error collecting details for role {role['RoleName']}: {str(e)}")
         return resources
+
 
     def _collect_role_policies(self) -> List[Dict[str, Any]]:
         resources = []
