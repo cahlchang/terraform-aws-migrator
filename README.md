@@ -33,7 +33,7 @@
     - LB Target Groups
     - Route 53 Hosted Zones
   - **Security**:
-    - IAM Users, Groups, and Roles
+    - IAM Users, Groups, Roles, and Policies
     - KMS Customer-Managed Keys
     - Secrets Manager Secrets
   - **Storage**:
@@ -57,16 +57,10 @@
 
 ### Installation
 
-1. Clone the repository:
+1. pip install from GitHub:
 
    ```bash
-   git clone https://github.com/cahlchang/terraform-aws-migrator.git
-   cd terraform-aws-migrator
-   ```
-
-2. Install the package:
-   ```bash
-   pip install .
+   pip install git+https://github.com/cahlchang/terraform-aws-migrator.git
    ```
 
 ## Usage
