@@ -14,7 +14,7 @@ class KMSCollector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_kms_key": "KMS Customer-Managed Keys"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:

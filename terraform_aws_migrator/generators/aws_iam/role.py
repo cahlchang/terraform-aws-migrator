@@ -63,3 +63,16 @@ class IAMRoleGenerator(HCLGenerator):
         except Exception as e:
             logger.error(f"Error generating HCL for IAM role: {str(e)}")
             return None
+
+    def generate_import(self, resource: Dict[str, Any]) -> Optional[str]:
+        try:
+            role_name = resource.get("id")
+            if not role_name:
+                logger.error("Missing role name for import command generation")
+                return None
+
+            return f"terraform import aws_iam_role.{role_name} {role_name}"
+
+        except Exception as e:
+            logger.error(f"Error generating import command for IAM role: {str(e)}")
+            return None

@@ -20,13 +20,20 @@ class IAMUserCollector(ResourceCollector):
             "aws_iam_user_policy_attachment": "IAM User Policy Attachments",
         }
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
         try:
-            resources.extend(self._collect_users())
-            resources.extend(self._collect_user_policies())
-            resources.extend(self._collect_user_policy_attachments())
-
+            if target_resource_type:
+                if target_resource_type == "aws_iam_user":
+                    resources.extend(self._collect_users())
+                elif target_resource_type == "aws_iam_user_policy":
+                    resources.extend(self._collect_user_policies())
+                elif target_resource_type == "aws_iam_user_policy_attachment":
+                    resources.extend(self._collect_user_policy_attachments())
+            else:
+                resources.extend(self._collect_users())
+                resources.extend(self._collect_user_policies())
+                resources.extend(self._collect_user_policy_attachments())
         except Exception as e:
             print(f"Error collecting IAM resources: {str(e)}")
 

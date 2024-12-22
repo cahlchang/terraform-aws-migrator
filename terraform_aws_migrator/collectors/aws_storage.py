@@ -17,7 +17,7 @@ class S3Collector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_s3_bucket": "S3 Buckets"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:

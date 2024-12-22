@@ -113,6 +113,22 @@ class HCLGeneratorRegistry:
             for resource_type, generator_class in cls._generators.items()
         }
 
+    @classmethod
+    @abstractmethod
+    def resource_type(cls) -> str:
+        """Return the resource type this generator handles"""
+        pass
+
+    @abstractmethod
+    def generate(self, resource: Dict[str, Any]) -> Optional[str]:
+        """Generate HCL for the given resource"""
+        pass
+        
+    @abstractmethod
+    def generate_import(self, resource: Dict[str, Any]) -> Optional[str]:
+        """Generate Terraform import command for the given resource"""
+        pass
+
 
 def register_generator(generator_class: Type[HCLGenerator]) -> Type[HCLGenerator]:
     """Decorator to register a generator class"""

@@ -17,7 +17,7 @@ class RDSCollector(ResourceCollector):
             "aws_rds_cluster": "RDS Database Clusters"
         }
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:

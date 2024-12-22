@@ -21,7 +21,7 @@ class EC2Collector(ResourceCollector):
             "aws_security_group": "Security Groups",
         }
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:

@@ -47,7 +47,9 @@ class ResourceCollector(ABC):
     @property
     def account_id(self):
         if self._account_id is None:
-            self._account_id = self.session.client("sts").get_caller_identity()["Account"]
+            self._account_id = self.session.client("sts").get_caller_identity()[
+                "Account"
+            ]
         return self._account_id
 
     @property
@@ -58,7 +60,7 @@ class ResourceCollector(ABC):
         return self._region
 
     @abstractmethod
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         """Collect resources for the service"""
         pass
 
@@ -83,14 +85,12 @@ class ResourceCollector(ABC):
 
 class CollectorRegistry:
     """Registry for resource collectors"""
-    
+
     def __init__(self):
         self.collectors = []
-        logger.debug("Initializing CollectorRegistry")
 
     def register(self, collector_class: type):
         """Register a collector class"""
-        logger.debug(f"Registering collector: {collector_class.__name__}")
         self.collectors.append(collector_class)
         return collector_class
 
@@ -104,7 +104,9 @@ class CollectorRegistry:
                 instances.append(collector)
                 logger.debug(f"Initialized collector: {collector_cls.__name__}")
             except Exception as e:
-                logger.error(f"Failed to initialize collector {collector_cls.__name__}: {e}")
+                logger.error(
+                    f"Failed to initialize collector {collector_cls.__name__}: {e}"
+                )
         return instances
 
     def iter_classes(self):
