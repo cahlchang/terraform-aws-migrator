@@ -1,5 +1,3 @@
-# terraform_aws_migrator/main.py
-
 import argparse
 import logging
 import traceback
@@ -142,13 +140,6 @@ def main():
             else:
                 console.print(formatted_output)
 
-            # Write the output
-            if args.output_file:
-                with open(args.output_file, "w") as f:
-                    f.write(formatted_output)
-                console.print(f"[green]Detection results written to {args.output_file}")
-            else:
-                console.print(formatted_output)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Detection cancelled by user")

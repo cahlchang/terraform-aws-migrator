@@ -188,128 +188,131 @@ class AWSResourceAuditor:
         return grouped.items()
 
     def audit_all_resources(self, tf_dir: str) -> Dict[str, List[Dict[str, Any]]]:
-        """Detect AWS resources that are not managed by Terraform"""
-        self.start_time = time.time()
-        unmanaged_resources = {}
+            """Detect AWS resources that are not managed by Terraform"""
+            self.start_time = time.time()
+            result = {
+                'managed': {},
+                'unmanaged': {}
+            }
+            
+            def get_elapsed_time() -> str:
+                elapsed = int(time.time() - self.start_time)
+                minutes = elapsed // 60
+                seconds = elapsed % 60
+                return f"[{minutes:02d}:{seconds:02d}]"
 
-        def get_elapsed_time() -> str:
-            """Get elapsed time in [MM:SS] format"""
-            elapsed = int(time.time() - self.start_time)
-            minutes = elapsed // 60
-            seconds = elapsed % 60
-            return f"[{minutes:02d}:{seconds:02d}]"
-
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("{task.description}", style="bold blue"),
-            CompactTimeColumn(),
-            console=self.console,
-            expand=False,
-            refresh_per_second=10,
-        )
-
-        with progress:
-            # Get Terraform managed resources
-            tf_task = progress.add_task(
-                "[yellow]Reading Terraform state...", total=None
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}", style="bold blue"),
+                CompactTimeColumn(),
+                console=self.console,
+                expand=False,
+                refresh_per_second=10,
             )
-            managed_resources = self.get_terraform_managed_resources(tf_dir, progress)
-            progress.update(tf_task, completed=True)
+
+            with progress:
+                # Get Terraform managed resources
+                tf_task = progress.add_task("[yellow]Reading Terraform state...", total=None)
+                managed_resources = self.get_terraform_managed_resources(tf_dir, progress)
+                progress.update(tf_task, completed=True)
+                
+                # Group managed resources by service
+                for resource in managed_resources.values():
+                    service_name = resource.get('type', '').split('_')[1] if resource.get('type', '').startswith('aws_') else 'other'
+                    if service_name not in result['managed']:
+                        result['managed'][service_name] = []
+                    result['managed'][service_name].append(resource)
+
+                self.console.print(
+                    f"Found {len(managed_resources)} managed resources in Terraform state {get_elapsed_time()}"
+                )
+
+                # Initialize collectors
+                collectors = [collector_cls(self.session) for collector_cls in registry]
+
+                # Add main AWS resource collection task
+                aws_task = progress.add_task(
+                    "[cyan]Collecting AWS resources...", total=None
+                )
+
+                # Process each collector
+                for collector in collectors:
+                    service_name = collector.get_service_name()
+                    try:
+                        # Update progress description
+                        resource_types = collector.get_resource_types()
+                        resource_type_names = ", ".join(resource_types.values())
+                        progress.update(
+                            aws_task,
+                            description=f"[cyan]Collecting {resource_type_names}...",
+                        )
+
+                        # Collect resources
+                        resources = collector.collect()
+                        
+                        # Filter unmanaged resources
+                        unmanaged = self._filter_unmanaged_resources(
+                            resources, managed_resources
+                        )
+
+                        if unmanaged:
+                            type_groups = {}
+                            for resource in unmanaged:
+                                resource_type = resource.get("type", "unknown")
+                                if resource_type not in type_groups:
+                                    type_groups[resource_type] = []
+                                type_groups[resource_type].append(resource)
+
+                            for resource_type, resources_list in type_groups.items():
+                                display_name = collector.get_type_display_name(
+                                    resource_type
+                                )
+                                self.console.print(
+                                    f"[green]Found {len(resources_list)} unmanaged {display_name} {get_elapsed_time()}"
+                                )
+
+                            # Add to result['unmanaged']
+                            if service_name not in result['unmanaged']:
+                                result['unmanaged'][service_name] = []
+                            result['unmanaged'][service_name].extend(unmanaged)
+
+                    except Exception as e:
+                        self.console.print(
+                            f"[red]Error collecting {service_name} resources: {str(e)}"
+                        )
+
+                # Complete the collection task
+                progress.update(aws_task, completed=True)
+
+            # Display total execution time
+            total_time = int(time.time() - self.start_time)
+            minutes = total_time // 60
+            seconds = total_time % 60
             self.console.print(
-                f"Found {len(managed_resources)} managed resources in Terraform state {get_elapsed_time()}"
+                f"\n[green]Total execution time: [{minutes:02d}:{seconds:02d}]"
             )
 
-            # Initialize collectors
-            collectors = [collector_cls(self.session) for collector_cls in registry]
+            return result
 
-            # Add main AWS resource collection task
-            aws_task = progress.add_task(
-                "[cyan]Collecting AWS resources...", total=None
-            )
+    def _filter_unmanaged_resources(self, resources: List[Dict[str, Any]], managed_resources: Dict[str, Any]) -> List[Dict[str, Any]]:
+            """Filter out resources that are managed by Terraform or explicitly excluded"""
+            unmanaged = []
+            managed_identifiers = set()
 
-            # Process each collector
-            for collector in collectors:
-                service_name = collector.get_service_name()
-                try:
-                    # Update progress description
-                    resource_types = collector.get_resource_types()
-                    resource_type_names = ", ".join(resource_types.values())
-                    progress.update(
-                        aws_task,
-                        description=f"[cyan]Collecting {resource_type_names}...",
-                    )
+            # Create a set of managed resource identifiers
+            for resource in managed_resources.values():
+                identifier = resource.get('arn') or resource.get('id')
+                if identifier:
+                    managed_identifiers.add(identifier)
 
-                    # Collect resources
-                    resources = collector.collect()
-                    # Filter unmanaged resources
-                    unmanaged = self._filter_unmanaged_resources(
-                        resources, managed_resources
-                    )
-
-                    if unmanaged:
-                        type_groups = {}
-                        for resource in unmanaged:
-                            resource_type = resource.get("type", "unknown")
-                            if resource_type not in type_groups:
-                                type_groups[resource_type] = []
-                            type_groups[resource_type].append(resource)
-
-                        for resource_type, resources_list in type_groups.items():
-                            display_name = collector.get_type_display_name(
-                                resource_type
-                            )
-                            self.console.print(
-                                f"[green]Found {len(resources_list)} unmanaged {display_name} {get_elapsed_time()}"
-                            )
-
-                        # unmanaged_resourcesに追加
-                        if service_name not in unmanaged_resources:
-                            unmanaged_resources[service_name] = []
-                        unmanaged_resources[service_name].extend(unmanaged)
-
-                except Exception as e:
-                    self.console.print(
-                        f"[red]Error collecting {service_name} resources: {str(e)}"
-                    )
-
-            # Complete the collection task
-            progress.update(aws_task, completed=True)
-
-        # Display total execution time
-        total_time = int(time.time() - self.start_time)
-        minutes = total_time // 60
-        seconds = total_time % 60
-        self.console.print(
-            f"\n[green]Total execution time: [{minutes:02d}:{seconds:02d}]"
-        )
-
-        return unmanaged_resources
-
-
-    def _filter_unmanaged_resources(self, resources: List[Dict[str, Any]], managed_resources: Set[str]) -> List[Dict[str, Any]]:
-        """Filter out resources that are managed by Terraform or explicitly excluded"""
-        unmanaged = []
-        # for mr in managed_resources:
-        #     self.console.print(f"mr {mr}")
-
-        for resource in resources:
-            identifier = self._get_resource_identifiers(resource)
-            # self.console.print(f"i {identifier}")
-            if identifier not in managed_resources:
-                if not self.exclusion_config.should_exclude(resource):
-                    if self.target_resource_type:
-                        if resource.get("type") == self.target_resource_type:
+            for resource in resources:
+                identifier = resource.get('arn') or resource.get('id')
+                if identifier and identifier not in managed_identifiers:
+                    if not self.exclusion_config.should_exclude(resource):
+                        if self.target_resource_type:
+                            if resource.get("type") == self.target_resource_type:
+                                unmanaged.append(resource)
+                        else:
                             unmanaged.append(resource)
-                    else:
-                        unmanaged.append(resource)
 
-        return unmanaged
-
-
-    def _get_resource_identifiers(self, resource: Dict[str, Any]) -> str:  # 戻り値の型をstrに修正
-        """Get identifier for a resource"""
-        if "arn" in resource:
-            return resource["arn"]
-        elif "id" in resource:
-            return resource["id"]
-        return str(resource)
+            return unmanaged
