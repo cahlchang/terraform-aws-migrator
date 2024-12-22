@@ -2,7 +2,7 @@ from typing import Dict, List, Any
 from ..base import ResourceCollector, register_collector
 
 import logging
-
+import traceback
 logger = logging.getLogger(__name__)
 
 
@@ -20,14 +20,22 @@ class IAMRoleCollector(ResourceCollector):
             "aws_iam_role_policy_attachment": "IAM Role Policy Attachments",
         }
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
         try:
-            resources.extend(self._collect_roles())
-            resources.extend(self._collect_role_policies())
-            resources.extend(self._collect_role_policy_attachments())
+            if target_resource_type:
+                if target_resource_type == "aws_iam_role":
+                    resources.extend(self._collect_roles())
+                elif target_resource_type == "aws_iam_role_policy":
+                    resources.extend(self._collect_role_policies())
+                elif target_resource_type == "aws_iam_role_policy_attachment":
+                    resources.extend(self._collect_role_policy_attachments())
+            else:
+                resources.extend(self._collect_roles())
+                resources.extend(self._collect_role_policies())
+                resources.extend(self._collect_role_policy_attachments())
         except Exception as e:
-            print(f"Error collecting IAM resources: {str(e)}")
+            print(f"Error collecting IAM resources: {traceback.format_exc()}")
 
         return resources
 
@@ -36,50 +44,35 @@ class IAMRoleCollector(ResourceCollector):
         paginator = self.client.get_paginator("list_roles")
         for page in paginator.paginate():
             for role in page["Roles"]:
-                if not any(rule(role["RoleName"]) for rule in self.get_excluded_rules()):
+                if not any(
+                    rule(role["RoleName"]) for rule in self.get_excluded_rules()
+                ):
                     try:
-                        tags = self.client.list_role_tags(RoleName=role["RoleName"])["Tags"]
+                        tags = self.client.list_role_tags(RoleName=role["RoleName"])[
+                            "Tags"
+                        ]
                         resource_id = role["RoleName"]
-                        resources.append({
-                            "type": "aws_iam_role",
-                            "id": resource_id,
-                            "arn": role["Arn"],
-                            "tags": tags,
-                            "details": {
-                                "path": role.get("Path"),
-                                "assume_role_policy": role.get("AssumeRolePolicyDocument", {}),
+                        resources.append(
+                            {
+                                "type": "aws_iam_role",
+                                "id": resource_id,
+                                "arn": role["Arn"],
+                                "tags": tags,
+                                "details": {
+                                    "path": role.get("Path"),
+                                    "assume_role_policy": role.get(
+                                        "AssumeRolePolicyDocument", {}
+                                    ),
+                                },
                             }
-                        })
+                        )
                     except Exception as e:
-                        logger.error(f"Error collecting details for role {role['RoleName']}: {str(e)}")
+                        logger.error(
+                            f"Error collecting details for role {role['RoleName']}: {str(e)}"
+                        )
         return resources
-
 
     def _collect_role_policies(self) -> List[Dict[str, Any]]:
-        resources = []
-        role_paginator = self.client.get_paginator("list_roles")
-        for role_page in role_paginator.paginate():
-            for role in role_page["Roles"]:
-                if not any(rule(role["RoleName"]) for rule in self.get_excluded_rules()):
-                    try:
-                        policy_paginator = self.client.get_paginator("list_role_policies")
-                        for policy_page in policy_paginator.paginate(RoleName=role["RoleName"]):
-                            for policy_name in policy_page["PolicyNames"]:
-                                # Terraform形式に合わせてIDを生成
-                                resource_id = f"{role['RoleName']}_{policy_name}"  # アンダースコアを使用
-                                resources.append({
-                                    "type": "aws_iam_role_policy",
-                                    "id": resource_id,
-                                    "role_name": role["RoleName"],
-                                    "policy_name": policy_name
-                                })
-                                logger.debug(f"Collected IAM role policy: {resource_id}")
-                    except Exception as e:
-                        logger.error(f"Error collecting inline policies for role {role['RoleName']}: {str(e)}")
-        return resources
-
-    def _collect_role_policy_attachments(self) -> List[Dict[str, Any]]:
-        """Collect role policy attachments"""
         resources = []
         role_paginator = self.client.get_paginator("list_roles")
         for role_page in role_paginator.paginate():
@@ -88,25 +81,65 @@ class IAMRoleCollector(ResourceCollector):
                     rule(role["RoleName"]) for rule in self.get_excluded_rules()
                 ):
                     try:
-                        attachment_paginator = self.client.get_paginator(
-                            "list_attached_role_policies"
+                        policy_paginator = self.client.get_paginator(
+                            "list_role_policies"
                         )
-                        for attachment_page in attachment_paginator.paginate(
+                        for policy_page in policy_paginator.paginate(
                             RoleName=role["RoleName"]
                         ):
-                            for policy in attachment_page["AttachedPolicies"]:
+                            for policy_name in policy_page["PolicyNames"]:
+                                resource_id = f"{role['RoleName']}_{policy_name}"
                                 resources.append(
                                     {
-                                        "type": "role_policy_attachment",
-                                        "id": f"{role['RoleName']}:{policy['PolicyName']}",
+                                        "type": "aws_iam_role_policy",
+                                        "id": resource_id,
                                         "role_name": role["RoleName"],
-                                        "policy_arn": policy["PolicyArn"],
+                                        "policy_name": policy_name,
                                     }
                                 )
                     except Exception as e:
-                        print(
-                            f"Error collecting policy attachments for role {role['RoleName']}: {str(e)}"
+                        logger.error(
+                            f"Error collecting inline policies for role {role['RoleName']}: {str(e)}"
                         )
+        return resources
+
+    def _collect_role_policy_attachments(self) -> List[Dict[str, Any]]:
+        """Collect role policy attachments"""
+        resources = []
+        role_paginator = self.client.get_paginator("list_roles")
+        role_names: List = []
+        for role_page in role_paginator.paginate():
+            for role in role_page["Roles"]:
+                role_names.append(role["RoleName"])
+
+        logger.debug(f"Collecting policy attachments for {len(role_names)} roles")
+        # Use STS client to get account ID
+        sts_client = self.session.client('sts')
+        account_id = sts_client.get_caller_identity()["Account"]
+        
+        for role_name in role_names:
+                if not any(
+                    rule(role_name) for rule in self.get_excluded_rules()
+                ):
+                    try:
+                        logger.debug(f"Getting attached policies for role: {role_name}")
+                        paginator = self.client.get_paginator("list_attached_role_policies")
+                        for page in paginator.paginate(RoleName=role_name):
+                            for policy in page["AttachedPolicies"]:
+                                attachment = {
+                                    "type": "aws_iam_role_policy_attachment",
+                                    "id": f"arn:aws:iam::{account_id}:role/{role_name}/{policy['PolicyArn']}",
+                                    "role_name": role_name,
+                                    "policy_arn": policy["PolicyArn"],
+                                }
+                                resources.append(attachment)
+                                logger.debug(f"Found policy attachment: {attachment['id']}")
+                    except Exception as e:
+                        logger.error(
+                            f"Error collecting policy attachments for role {role_name}: {str(e)}"
+                        )
+
+        logger.debug(f"Collected total of {len(resources)} policy attachments")
         return resources
 
     def get_excluded_rules(self) -> List[callable]:

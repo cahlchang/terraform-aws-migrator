@@ -14,7 +14,7 @@ class StepFunctionCollector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_sfn_state_machine": "Step Functions State Machines"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
         try:
             paginator = self.client.get_paginator("list_state_machines")

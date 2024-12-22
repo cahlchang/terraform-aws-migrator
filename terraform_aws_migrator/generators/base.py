@@ -1,11 +1,11 @@
 # terraform_aws_migrator/generators/base.py
 
+from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Type
 import importlib
 import os
 import pkgutil
 import logging
-from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,10 @@ class HCLGeneratorRegistry:
     def _initialize(cls) -> None:
         """Initialize the registry by discovering and loading all generators"""
         if cls._initialized:
+            logger.debug("Registry already initialized")
             return
+            
+        logger.debug("Starting registry initialization")
 
         # Get the generators directory path
         generators_dir = os.path.dirname(__file__)
@@ -85,6 +88,7 @@ class HCLGeneratorRegistry:
                     try:
                         if module_name != "terraform_aws_migrator.generators.base":  # Skip base.py
                             importlib.import_module(module_name)
+                            logger.debug(f"Successfully loaded module: {module_name}")
                     except Exception as e:
                         logger.debug(f"Failed to load generator module {module_name}: {e}")
 
@@ -108,6 +112,23 @@ class HCLGeneratorRegistry:
             resource_type: generator_class.__doc__ or ""
             for resource_type, generator_class in cls._generators.items()
         }
+
+    @classmethod
+    @abstractmethod
+    def resource_type(cls) -> str:
+        """Return the resource type this generator handles"""
+        pass
+
+    @abstractmethod
+    def generate(self, resource: Dict[str, Any]) -> Optional[str]:
+        """Generate HCL for the given resource"""
+        pass
+        
+    @abstractmethod
+    def generate_import(self, resource: Dict[str, Any]) -> Optional[str]:
+        """Generate Terraform import command for the given resource"""
+        pass
+
 
 def register_generator(generator_class: Type[HCLGenerator]) -> Type[HCLGenerator]:
     """Decorator to register a generator class"""

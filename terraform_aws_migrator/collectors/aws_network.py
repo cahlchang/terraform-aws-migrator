@@ -14,7 +14,7 @@ class APIGatewayCollector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_api_gateway_rest_api": "API Gateway REST APIs"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:

@@ -6,6 +6,10 @@ from typing import Dict, List, Any, Set, Optional
 import boto3
 import hcl2
 from rich.console import Console
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
 
 
 class TerraformStateReader:
@@ -14,64 +18,176 @@ class TerraformStateReader:
     def __init__(self, session: boto3.Session):
         self.session = session
         self.console = Console()
+        self._account_id = None
+
+    @property
+    def account_id(self):
+        if not self._account_id:
+            self._account_id = self.session.client("sts").get_caller_identity()[
+                "Account"
+            ]
+        return self._account_id
 
     def read_backend_config(self, tf_dir: str, progress=None) -> List[Dict[str, Any]]:
-        """Reads backend configuration from Terraform files (for backward compatibility)"""
+        """Reads backend configuration from Terraform files"""
         tf_dir_path = Path(tf_dir)
         backend_config = self._find_s3_backend(tf_dir_path)
         return [{"s3": backend_config}] if backend_config else []
 
-    def get_managed_resources(self, tf_dir: str, progress=None) -> Set[str]:
-        """Get all ARNs of resources managed by Terraform from state files"""
-        managed_resources = set()
-        tf_dir_path = Path(tf_dir)
+    def _extract_resources_from_state(
+        self, state_data: Dict[str, Any], managed_resources: Set[str]
+    ):
+        """
+        Extract resource identifiers from state data
+        Args:
+            state_data: Terraform state data
+            managed_resources: Set to store managed resource identifiers
+        """
         try:
-            # Add debug logging
-            self.console.print(f"[blue]Scanning directory for Terraform files: {tf_dir_path}")
+            # For Terraform 0.13+ format
+            if "resources" in state_data:
+                for resource in state_data["resources"]:
+                    # Skip data sources
+                    if resource.get("mode") == "data":
+                        continue
 
-            # First check local state files
-            state_files = list(tf_dir_path.rglob("*.tfstate"))
-            self.console.print(f"[blue]Found local state files: {[str(f) for f in state_files]}")
+                    resource_type = resource.get("type", "")
+                    for instance in resource.get("instances", []):
+                        formatted_resource = self._format_resource(
+                            resource_type,
+                            instance.get("attributes", {}),
+                            instance.get("index_key"),
+                        )
+                        if formatted_resource:
+                            # Get the identifier for managed_resources set
+                            identifier = self._get_identifier_for_managed_set(
+                                formatted_resource
+                            )
+                            if identifier:
+                                managed_resources.add(identifier)
 
-            for state_file in state_files:
-                self.console.print(f"[blue]Reading state file: {state_file}")
-                state_data = self._read_local_state(state_file)
-                if state_data:
-                    self.console.print(f"[green]Successfully read state file: {state_file}")
-                    self._extract_resources_from_state(state_data, managed_resources)
-                else:
-                    self.console.print(f"[yellow]Unable to read state file: {state_file}")
+            # For older state format
+            if "modules" in state_data:
+                for module in state_data["modules"]:
+                    resources = module.get("resources", {})
+                    for resource_addr, resource in resources.items():
+                        # Skip data sources
+                        if resource_addr.startswith("data."):
+                            continue
 
-            # Then check S3 backend
-            s3_config = self._find_s3_backend(tf_dir_path)
-            if s3_config:
-                self.console.print(f"[blue]Found S3 backend configuration: {s3_config}")
-                state_data = self._get_s3_state(
-                    bucket=s3_config["bucket"],
-                    key=s3_config["key"],
-                    region=s3_config.get("region", self.session.region_name),
-                )
-                if state_data:
-                    self.console.print("\n[green]Successfully read state from S3")
-                    self._extract_resources_from_state(state_data, managed_resources)
+                        primary = resource.get("primary", {})
+                        attributes = primary.get("attributes", {})
+                        resource_type = resource.get("type", "")
 
-            self.console.print(f"\n[green]Total managed resources found: {len(managed_resources)}")
-            return managed_resources
+                        formatted_resource = self._format_resource(
+                            resource_type, attributes, None
+                        )
+                        if formatted_resource:
+                            # Get the identifier for managed_resources set
+                            identifier = self._get_identifier_for_managed_set(
+                                formatted_resource
+                            )
+                            if identifier:
+                                managed_resources.add(identifier)
+
         except Exception as e:
-            self.console.print(f"[red]Error reading Terraform state: {str(e)}")
-            return set()
+            self.console.print(f"[red]Error extracting resources from state: {str(e)}")
 
-    def get_s3_state_file(
-        self, bucket: str, key: str, region: str, progress=None
-    ) -> Dict[str, Any]:
-        """Read Terraform state file from S3 (for backward compatibility)"""
-        return self._get_s3_state(bucket, key, region) or {}
+    def _get_identifier_for_managed_set(
+        self, resource: Dict[str, Any]
+    ) -> Optional[str]:
+        """
+        Get the appropriate identifier for the managed_resources set
+        Args:
+            resource: Formatted resource dictionary
+        Returns:
+            String identifier for the managed_resources set
+        """
+        # Return ARN if available
+        if "arn" in resource:
+            return resource["arn"]
 
-    def read_backend_config(self, tf_dir: str, progress=None) -> List[Dict[str, Any]]:
-        """Reads backend configuration from Terraform files (for backward compatibility)"""
-        tf_dir_path = Path(tf_dir)
-        backend_config = self._find_s3_backend(tf_dir_path)
-        return [{"s3": backend_config}] if backend_config else []
+        # If no ARN, construct identifier from type and id
+        resource_type = resource.get("type")
+        resource_id = resource.get("id")
+
+        if resource_type and resource_id:
+            return f"{resource_type}:{resource_id}"
+
+        return resource.get("id")  # Fallback to just ID if nothing else available
+
+    def _format_resource(
+        self, resource_type: str, attributes: Dict[str, Any], index_key: Any = None
+    ) -> Optional[Dict[str, Any]]:
+        """Format a single resource into our expected structure"""
+        try:
+            resource_id = self._get_resource_id(resource_type, attributes, index_key)
+            if not resource_id:
+                return None
+
+            formatted = {
+                "id": resource_id,
+                "type": resource_type,
+                "tags": self._extract_tags(attributes),
+                "details": {},
+            }
+
+            # Add ARN if available
+            if "arn" in attributes:
+                formatted["arn"] = attributes["arn"]
+            elif resource_type.startswith("aws_iam_"):
+                formatted["arn"] = (
+                    f"arn:aws:iam::{self.account_id}:{resource_type.replace('aws_', '')}/{resource_id}"
+                )
+
+            # Add resource-specific details
+            if resource_type == "aws_iam_role":
+                formatted["details"].update(
+                    {
+                        "path": attributes.get("path", "/"),
+                        "assume_role_policy": json.loads(
+                            attributes.get("assume_role_policy", "{}")
+                        ),
+                        "description": attributes.get("description", ""),
+                        "max_session_duration": attributes.get("max_session_duration"),
+                        "permissions_boundary": attributes.get("permissions_boundary"),
+                    }
+                )
+            elif resource_type == "aws_iam_role_policy_attachment":
+                formatted["details"].update(
+                    {
+                        "role": attributes.get("role"),
+                        "policy_arn": attributes.get("policy_arn"),
+                    }
+                )
+
+            return formatted
+
+        except Exception as e:
+            logger.error(f"Error formatting resource {resource_type}: {str(e)}")
+            return None
+
+    def _get_resource_id(
+        self, resource_type: str, attributes: Dict[str, Any], index_key: Any = None
+    ) -> Optional[str]:
+        """Get the appropriate identifier for a resource"""
+        if "id" in attributes:
+            return attributes["id"]
+        elif "name" in attributes:
+            return attributes["name"]
+        return None
+
+    def _extract_tags(self, attributes: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Extract tags from attributes in a consistent format"""
+        tags = []
+        if "tags" in attributes:
+            if isinstance(attributes["tags"], dict):
+                tags.extend(
+                    {"Key": k, "Value": v} for k, v in attributes["tags"].items()
+                )
+            elif isinstance(attributes["tags"], list):
+                tags.extend(attributes["tags"])
+        return tags
 
     def _find_s3_backend(self, tf_dir: Path) -> Optional[Dict[str, str]]:
         """Find S3 backend configuration in main.tf"""
@@ -127,46 +243,132 @@ class TerraformStateReader:
             )
             return None
 
+    # terraform_aws_migrator/state_reader.py
+
+    def get_managed_resources(
+        self, tf_dir: str, progress=None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all resources managed by Terraform from state files with their complete information
+
+        Args:
+            tf_dir: Directory containing Terraform files
+            progress: Optional progress callback
+
+        Returns:
+            Dictionary of managed resources with their complete information
+            Format:
+            {
+                "resource_identifier": {
+                    "id": "example_id",
+                    "type": "aws_iam_role",
+                    "arn": "arn:aws:iam::...",
+                    "tags": [...],
+                    "details": {...}
+                },
+                ...
+            }
+        """
+        managed_resources = {}
+        tf_dir_path = Path(tf_dir)
+        try:
+            # First check S3 backend
+            s3_config = self._find_s3_backend(tf_dir_path)
+            if s3_config and progress:
+                state_data = self._get_s3_state(
+                    bucket=s3_config["bucket"],
+                    key=s3_config["key"],
+                    region=s3_config.get("region", self.session.region_name),
+                )
+                if state_data:
+                    self._extract_resources_from_state(state_data, managed_resources)
+
+            # Then check local state files
+            state_files = list(Path(tf_dir).rglob("*.tfstate"))
+            for state_file in state_files:
+                state_data = self._read_local_state(state_file)
+                if state_data:
+                    self._extract_resources_from_state(state_data, managed_resources)
+
+            return managed_resources
+
+        except Exception as e:
+            self.console.print(f"[red]Error reading Terraform state: {str(e)}")
+            return {}
+
     def _extract_resources_from_state(
-        self, state_data: Dict[str, Any], managed_resources: Set[str]
+        self, state_data: Dict[str, Any], managed_resources: Dict[str, Dict[str, Any]]
     ):
-        """Extract resource identifiers from state data"""
-        # For Terraform 0.13+ format
-        if "resources" in state_data:
+        """
+        Extract resource information from state data
+
+        Args:
+            state_data: Terraform state data
+            managed_resources: Dictionary to store managed resource information
+        """
+        try:
+            if "resources" not in state_data:
+                return
+
             for resource in state_data["resources"]:
-                # Skip data sources
                 if resource.get("mode") == "data":
                     continue
 
+                resource_type = resource.get("type", "")
                 for instance in resource.get("instances", []):
                     attributes = instance.get("attributes", {})
-                    self._add_resource_identifier(attributes, managed_resources)
 
-        # For older state format
-        if "modules" in state_data:
-            for module in state_data["modules"]:
-                resources = module.get("resources", {})
-                for resource_addr, resource in resources.items():
-                    # Skip data sources
-                    if resource_addr.startswith("data."):
-                        continue
+                    if resource_type == "aws_iam_role_policy_attachment":
+                        role_name = attributes.get("role")
+                        policy_arn = attributes.get("policy_arn")
+                        if role_name and policy_arn:
+                            identifier = f"arn:aws:iam::{self.account_id}:role/{role_name}/{policy_arn}"
+                            managed_resources[identifier] = {
+                                "id": identifier,
+                                "type": resource_type,
+                                "role_name": role_name,
+                                "policy_arn": policy_arn,
+                            }
+                    else:
+                        formatted_resource = self._format_resource(
+                            resource_type,
+                            attributes,
+                            instance.get("index_key"),
+                        )
+                        if formatted_resource:
+                            identifier = self._get_identifier_for_managed_set(
+                                formatted_resource
+                            )
+                            if identifier:
+                                managed_resources[identifier] = formatted_resource
 
-                    primary = resource.get("primary", {})
-                    attributes = primary.get("attributes", {})
-                    self._add_resource_identifier(attributes, managed_resources)
+        except Exception as e:
+            self.console.print(f"[red]Error extracting resources from state: {str(e)}")
 
-    def _add_resource_identifier(
-        self, attributes: Dict[str, Any], managed_resources: Set[str]
-    ):
-        """Add resource identifier (ARN or constructed identifier) to the set"""
-        if "arn" in attributes:
-            managed_resources.add(attributes["arn"])
-            return
+    def get_s3_state_file(
+        self, bucket: str, key: str, region: str, progress=None
+    ) -> Dict[str, Any]:
+        """Read Terraform state file from S3 (for backward compatibility)"""
+        return self._get_s3_state(bucket, key, region) or {}
 
-        if "id" in attributes and "type" in attributes:
-            constructed_id = f"{attributes['type']}:{attributes['id']}"
-            managed_resources.add(constructed_id)
-            return
-
+    def _get_resource_id(
+        self, resource_type: str, attributes: Dict[str, Any], index_key: Any = None
+    ) -> Optional[str]:
+        """Get the appropriate identifier for a resource"""
         if "id" in attributes:
-            managed_resources.add(attributes["id"])
+            return attributes["id"]
+        elif "name" in attributes:
+            return attributes["name"]
+        return None
+
+    def _extract_tags(self, attributes: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Extract tags from attributes in a consistent format"""
+        tags = []
+        if "tags" in attributes:
+            if isinstance(attributes["tags"], dict):
+                tags.extend(
+                    {"Key": k, "Value": v} for k, v in attributes["tags"].items()
+                )
+            elif isinstance(attributes["tags"], list):
+                tags.extend(attributes["tags"])
+        return tags

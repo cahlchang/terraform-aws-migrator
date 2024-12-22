@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import traceback
 from rich.console import Console
 from terraform_aws_migrator.utils.resource_utils import show_supported_resources
 from terraform_aws_migrator.auditor import AWSResourceAuditor
@@ -11,22 +12,17 @@ from terraform_aws_migrator.generators import HCLGeneratorRegistry
 
 def setup_logging(debug: bool = False):
     """Configure logging settings"""
-    # Suppress all loggers initially
-    logging.getLogger().setLevel(logging.WARNING)
 
-    # Suppress specific loggers
+    # Always suppress boto3/botocore logs unless in debug mode
+    logging.getLogger("boto3").setLevel(logging.WARNING)
     logging.getLogger("botocore").setLevel(logging.WARNING)
-    logging.getLogger("terraform_aws_migrator.collectors.base").setLevel(
-        logging.WARNING
-    )
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    # Set debug level if requested
+    # Set root logger to debug level if requested
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
-        logging.getLogger("botocore").setLevel(logging.INFO)
-        logging.getLogger("terraform_aws_migrator.collectors.base").setLevel(
-            logging.DEBUG
-        )
+    else:
+        logging.getLogger().setLevel(logging.WARNING)
 
     logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
@@ -109,16 +105,28 @@ def main():
             )
             # generate HCL
             generator = HCLGeneratorRegistry.get_generator(args.type)
+            console.print(f"[green]Generating HCL for {len(unmanaged_resources)} {args.type} resources")
 
-            for service_name, resources in unmanaged_resources.items():
-                for resource in resources:
+            import_txt = ""
+            for resource_id, resource in unmanaged_resources.items():
+                if isinstance(resource, dict):
                     hcl = generator.generate(resource)
+                    import_cmd = generator.generate_import(resource)
                     if hcl:
                         if args.output_file:
                             with open(args.output_file, "a") as f:
                                 f.write(hcl + "\n\n")
                         else:
                             console.print(hcl)
+                    if import_cmd:
+                        import_txt += import_cmd + "\n"
+
+            if args.output_file:
+                with open(args.output_file, "a") as f:
+                    f.write(import_txt + "\n\n")
+            else:
+                console.print(import_txt)
+
         else:
             # Normal mode
             auditor = AWSResourceAuditor(exclusion_file=args.ignore_file)
@@ -147,6 +155,7 @@ def main():
         return 1
     except Exception as e:
         console.print(f"[red]Error during detection: {str(e)}")
+        console.print(f"[red]Error during detection: {traceback.format_exc()}")
         return 1
 
     return 0

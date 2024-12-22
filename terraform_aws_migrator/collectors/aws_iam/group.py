@@ -7,6 +7,7 @@ from ..base import ResourceCollector, register_collector
 
 logger = logging.getLogger(__name__)
 
+
 @register_collector
 class IAMGroupCollector(ResourceCollector):
     @classmethod
@@ -22,9 +23,11 @@ class IAMGroupCollector(ResourceCollector):
             "aws_iam_group_membership": "IAM Group Memberships",
         }
 
-    def collect(self) -> List[Dict[str, Any]]:
-        resources = []
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
+        resources: List = []
         try:
+            if target_resource_type != "aws_iam_group":
+                return resources
             # Collect IAM groups
             paginator = self.client.get_paginator("list_groups")
             for page in paginator.paginate():
