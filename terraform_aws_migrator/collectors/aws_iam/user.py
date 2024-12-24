@@ -61,6 +61,7 @@ class IAMUserCollector(ResourceCollector):
                     )
         return resources
 
+
     def _collect_user_policies(self) -> List[Dict[str, Any]]:
         """Collect inline user policies"""
         resources = []
@@ -73,16 +74,26 @@ class IAMUserCollector(ResourceCollector):
                         UserName=user["UserName"]
                     ):
                         for policy_name in policy_page["PolicyNames"]:
-                            resources.append(
-                                {
-                                    "type": "user_policy",
+                            # Get the policy document
+                            try:
+                                policy = self.client.get_user_policy(
+                                    UserName=user["UserName"],
+                                    PolicyName=policy_name
+                                )
+                                resources.append({
+                                    "type": "aws_iam_user_policy",
                                     "id": f"{user['UserName']}:{policy_name}",
                                     "user_name": user["UserName"],
                                     "policy_name": policy_name,
-                                }
-                            )
+                                    "policy_document": policy["PolicyDocument"]
+                                })
+                            except Exception as e:
+                                logger.error(
+                                    f"Error getting policy document for user {user['UserName']}, "
+                                    f"policy {policy_name}: {str(e)}"
+                                )
                 except Exception as e:
-                    print(
+                    logger.error(
                         f"Error collecting inline policies for user {user['UserName']}: {str(e)}"
                     )
         return resources
@@ -103,7 +114,7 @@ class IAMUserCollector(ResourceCollector):
                         for policy in attachment_page["AttachedPolicies"]:
                             resources.append(
                                 {
-                                    "type": "user_policy_attachment",
+                                    "type": "aws_iam_user_policy_attachment",
                                     "id": f"{user['UserName']}:{policy['PolicyName']}",
                                     "user_name": user["UserName"],
                                     "policy_arn": policy["PolicyArn"],
