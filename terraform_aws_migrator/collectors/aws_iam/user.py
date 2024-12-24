@@ -49,7 +49,7 @@ class IAMUserCollector(ResourceCollector):
                     tags = self.client.list_user_tags(UserName=user["UserName"])["Tags"]
                     resources.append(
                         {
-                            "type": "user",
+                            "type": "aws_iam_user",
                             "id": user["UserName"],
                             "arn": user["Arn"],
                             "tags": tags,
@@ -86,33 +86,6 @@ class IAMUserCollector(ResourceCollector):
                         f"Error collecting inline policies for user {user['UserName']}: {str(e)}"
                     )
         return resources
-
-    def _collect_user_policies(self) -> List[Dict[str, Any]]:
-        """Collect inline user policies"""
-        resources = []
-        user_paginator = self.client.get_paginator("list_users")
-        for user_page in user_paginator.paginate():
-            for user in user_page["Users"]:
-                try:
-                    policy_paginator = self.client.get_paginator("list_user_policies")
-                    for policy_page in policy_paginator.paginate(
-                        UserName=user["UserName"]
-                    ):
-                        for policy_name in policy_page["PolicyNames"]:
-                            resources.append(
-                                {
-                                    "type": "user_policy",
-                                    "id": f"{user['UserName']}:{policy_name}",
-                                    "user_name": user["UserName"],
-                                    "policy_name": policy_name,
-                                }
-                            )
-                except Exception as e:
-                    print(
-                        f"Error collecting inline policies for user {user['UserName']}: {str(e)}"
-                    )
-        return resources
-
 
     def _collect_user_policy_attachments(self) -> List[Dict[str, Any]]:
         """Collect user policy attachments"""

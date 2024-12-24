@@ -136,34 +136,33 @@ def format_output(
                         else:
                             display_name = resource_type
 
-                for resource in resources_list:
-                    resource_id = resource.get("id", "N/A")
-                    resource_arn = resource.get("arn", "N/A")
+                        resource_id = resource.get("id", "N/A")
+                        resource_arn = resource.get("arn", "N/A")
 
-                    output.append(f"  ID: {resource_id}")
-                    output.append(f"  ARN: {resource_arn}")
+                        output.append(f"  ID: {resource_id}")
+                        output.append(f"  ARN: {resource_arn}")
 
-                    # Add details if present
-                    details = resource.get("details", {})
-                    if details:
-                        output.append("  Details:")
-                        for detail_key, value in sorted(details.items()):
-                            output.append(f"    {detail_key}: {value}")
+                        # Add details if present
+                        details = resource.get("details", {})
+                        if details:
+                            output.append("  Details:")
+                            for detail_key, value in sorted(details.items()):
+                                output.append(f"    {detail_key}: {value}")
 
-                    # Add tags if present
-                    tags = resource.get("tags", [])
-                    if tags:
-                        output.append("  Tags:")
-                        if isinstance(tags, list):
-                            for tag in tags:
-                                if isinstance(tag, dict):
-                                    key = tag.get("Key", "N/A")
-                                    value = tag.get("Value", "N/A")
-                                    output.append(f"    {key}: {value}")
-                        elif isinstance(tags, dict):
-                            for tag_key, value in sorted(tags.items()):
-                                output.append(f"    {tag_key}: {value}")
-                    output.append("")  # Empty line for readability
+                        # Add tags if present
+                        tags = resource.get("tags", [])
+                        if tags:
+                            output.append("  Tags:")
+                            if isinstance(tags, list):
+                                for tag in tags:
+                                    if isinstance(tag, dict):
+                                        key = tag.get("Key", "N/A")
+                                        value = tag.get("Value", "N/A")
+                                        output.append(f"    {key}: {value}")
+                            elif isinstance(tags, dict):
+                                for tag_key, value in sorted(tags.items()):
+                                    output.append(f"    {tag_key}: {value}")
+                        output.append("")  # Empty line for readability
 
         return "\n".join(output)
 
