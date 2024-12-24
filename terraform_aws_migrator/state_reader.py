@@ -329,6 +329,15 @@ class TerraformStateReader:
                                 "role_name": role_name,
                                 "policy_arn": policy_arn,
                             }
+                    elif resource_type == "aws_iam_user_policy":
+                        user_name = attributes.get("user")
+                        policy_name = attributes.get("name")
+                        identifier = f"{user_name}:{policy_name}"
+                        managed_resources[identifier] = {
+                            "id": attributes['id'],
+                            "type": resource_type,
+                            "user_name": user_name,
+                        }
                     elif resource_type == "aws_iam_user_policy_attachment":
                         user_name = attributes.get("user")
                         policy_arn = attributes.get("policy_arn")
