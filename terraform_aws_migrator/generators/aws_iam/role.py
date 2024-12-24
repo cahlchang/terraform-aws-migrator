@@ -67,11 +67,13 @@ class IAMRoleGenerator(HCLGenerator):
     def generate_import(self, resource: Dict[str, Any]) -> Optional[str]:
         try:
             role_name = resource.get("id")
+            prefix = self.get_import_prefix()
             if not role_name:
                 logger.error("Missing role name for import command generation")
                 return None
 
-            return f"terraform import aws_iam_role.{role_name} {role_name}"
+            return f"terraform import {prefix + '.' if prefix else ''}" \
+                f"aws_iam_role.{role_name} {role_name}"
 
         except Exception as e:
             logger.error(f"Error generating import command for IAM role: {str(e)}")

@@ -67,8 +67,8 @@ class IAMUserGenerator(HCLGenerator):
                 logger.error("Missing user name for import command")
                 return None
 
-            # Base user import command
-            return f"terraform import aws_iam_user.{user_name} {user_name}"
+            prefix = self.get_import_prefix()
+            return f"terraform import {prefix + '.' if prefix else ''}aws_iam_user.{user_name} {user_name}"
 
         except Exception as e:
             logger.error(f"Error generating import command for IAM user: {str(e)}")

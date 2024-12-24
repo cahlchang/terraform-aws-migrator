@@ -9,9 +9,19 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class HCLGenerator(ABC):
     """Base class for HCL generators"""
-    
+
+    def __init__(self, module_prefix: Optional[str] = None):
+        """
+        Initialize the generator
+
+        Args:
+            module_prefix (str, optional): Module prefix for import commands
+        """
+        self.module_prefix = module_prefix
+
     @classmethod
     @abstractmethod
     def resource_type(cls) -> str:
@@ -23,9 +33,19 @@ class HCLGenerator(ABC):
         """Generate HCL for the given resource"""
         pass
 
+    def get_import_prefix(self) -> str:
+        """
+        Get the module prefix for import commands
+
+        Returns:
+            str: Module prefix string (e.g., "module.my_module") or empty string
+        """
+        return f"module.{self.module_prefix}" if self.module_prefix else ""
+
+
 class HCLGeneratorRegistry:
     """Registry for HCL generators"""
-    
+
     _generators: Dict[str, Type[HCLGenerator]] = {}
     _initialized = False
 
@@ -38,14 +58,25 @@ class HCLGeneratorRegistry:
         return generator_class
 
     @classmethod
-    def get_generator(cls, resource_type: str) -> Optional[HCLGenerator]:
-        """Get a generator instance for the given resource type"""
+    def get_generator(
+        cls, resource_type: str, module_prefix: Optional[str] = None
+    ) -> Optional[HCLGenerator]:
+        """
+        Get a generator instance for the given resource type
+
+        Args:
+            resource_type (str): AWS resource type
+            module_prefix (str, optional): Module prefix for import commands
+
+        Returns:
+            Optional[HCLGenerator]: Generator instance if supported, None otherwise
+        """
         if not cls._initialized:
             cls._initialize()
-        
+
         generator_class = cls._generators.get(resource_type)
         if generator_class:
-            return generator_class()
+            return generator_class(module_prefix=module_prefix)
         return None
 
     @classmethod
@@ -53,7 +84,7 @@ class HCLGeneratorRegistry:
         """Check if a resource type is supported"""
         if not cls._initialized:
             cls._initialize()
-            
+
         return resource_type in cls._generators
 
     @classmethod
@@ -62,39 +93,45 @@ class HCLGeneratorRegistry:
         if cls._initialized:
             logger.debug("Registry already initialized")
             return
-            
+
         logger.debug("Starting registry initialization")
 
         # Get the generators directory path
         generators_dir = os.path.dirname(__file__)
-        
+
         # Function to recursively load modules from a directory
         def load_modules_from_dir(dir_path: str, package_prefix: str) -> None:
             for item in os.listdir(dir_path):
                 item_path = os.path.join(dir_path, item)
-                
+
                 # Skip __pycache__ and files starting with _
-                if item.startswith('_') or item == '__pycache__':
+                if item.startswith("_") or item == "__pycache__":
                     continue
-                
+
                 if os.path.isdir(item_path):
                     # It's a subdirectory - recurse into it
                     subpackage = f"{package_prefix}.{item}"
                     load_modules_from_dir(item_path, subpackage)
-                    
-                elif item.endswith('.py'):
+
+                elif item.endswith(".py"):
                     # It's a Python file - try to import it
-                    module_name = f"{package_prefix}.{item[:-3]}"  # Remove .py extension
+                    module_name = (
+                        f"{package_prefix}.{item[:-3]}"  # Remove .py extension
+                    )
                     try:
-                        if module_name != "terraform_aws_migrator.generators.base":  # Skip base.py
+                        if (
+                            module_name != "terraform_aws_migrator.generators.base"
+                        ):  # Skip base.py
                             importlib.import_module(module_name)
                             logger.debug(f"Successfully loaded module: {module_name}")
                     except Exception as e:
-                        logger.debug(f"Failed to load generator module {module_name}: {e}")
+                        logger.debug(
+                            f"Failed to load generator module {module_name}: {e}"
+                        )
 
         # Load all modules from the generators directory
         load_modules_from_dir(generators_dir, "terraform_aws_migrator.generators")
-        
+
         if not cls._generators:
             logger.warning("No generators were registered")
         else:
@@ -107,7 +144,7 @@ class HCLGeneratorRegistry:
         """List all supported resource types"""
         if not cls._initialized:
             cls._initialize()
-            
+
         return {
             resource_type: generator_class.__doc__ or ""
             for resource_type, generator_class in cls._generators.items()
@@ -123,7 +160,7 @@ class HCLGeneratorRegistry:
     def generate(self, resource: Dict[str, Any]) -> Optional[str]:
         """Generate HCL for the given resource"""
         pass
-        
+
     @abstractmethod
     def generate_import(self, resource: Dict[str, Any]) -> Optional[str]:
         """Generate Terraform import command for the given resource"""

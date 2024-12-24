@@ -30,6 +30,7 @@ def main():
         description="Detect and migrate AWS resources that are not managed by Terraform"
     )
     parser.add_argument(
+        "-t",
         "--tf-dir", type=str, help="Directory containing Terraform files"
     )
     parser.add_argument(
@@ -65,7 +66,11 @@ def main():
         type=str,
         help="Resource type to generate HCL for (e.g., aws_iam_role)",
     )
-
+    parser.add_argument(
+        "--module-prefix",
+        type=str,
+        help="Module prefix for import commands (e.g., 'my_module')"
+    )
     args = parser.parse_args()
     setup_logging(args.debug)
     console = Console(stderr=True)
@@ -101,9 +106,12 @@ def main():
             unmanaged_resources = auditor.audit_specific_resource(
                 args.tf_dir, args.type
             )
-            # generate HCL
-            generator = HCLGeneratorRegistry.get_generator(args.type)
-            console.print(f"[green]Generating HCL for {len(unmanaged_resources)} {args.type} resources")
+            # Get generator with module prefix if specified
+            generator = HCLGeneratorRegistry.get_generator(
+                args.type,
+                module_prefix=args.module_prefix
+            )
+            console.print(f"Generating HCL for {len(unmanaged_resources)} {args.type} resources")
 
             import_txt = ""
             for resource_id, resource in unmanaged_resources.items():
