@@ -329,6 +329,16 @@ class TerraformStateReader:
                                 "role_name": role_name,
                                 "policy_arn": policy_arn,
                             }
+                    elif resource_type == "aws_iam_user_policy_attachment":
+                        user_name = attributes.get("user")
+                        policy_arn = attributes.get("policy_arn")
+                        identifier = f"{user_name}:{policy_arn}"
+                        managed_resources[identifier] = {
+                            "id": identifier,
+                            "type": resource_type,
+                            "user_name": user_name,
+                            "policy_arn": policy_arn,
+                        }
                     else:
                         formatted_resource = self._format_resource(
                             resource_type,
@@ -343,7 +353,7 @@ class TerraformStateReader:
                                 managed_resources[identifier] = formatted_resource
 
         except Exception as e:
-            self.console.print(f"[red]Error extracting resources from state: {str(e)}")
+            raise e
 
     def get_s3_state_file(
         self, bucket: str, key: str, region: str, progress=None
