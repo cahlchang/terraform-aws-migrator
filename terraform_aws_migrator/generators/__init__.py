@@ -16,18 +16,23 @@ def load_generators():
     # Get the directory containing the generators
     generators_dir = Path(__file__).parent
 
-    # Load all submodules in aws_iam directory
-    aws_iam_dir = generators_dir / "aws_iam"
-    if aws_iam_dir.exists():
-        for module_info in pkgutil.iter_modules([str(aws_iam_dir)]):
-            module_name = f"{__package__}.aws_iam.{module_info.name}"
-            try:
-                importlib.import_module(module_name)
-                logger.debug(f"Successfully loaded generator module: {module_name}")
-            except Exception as e:
-                logger.error(f"Failed to load generator module {module_name}: {str(e)}")
-    else:
-        logger.warning(f"AWS IAM generators directory not found at {aws_iam_dir}")
+    # Define subdirectories to load generators from
+    generator_subdirs = ["aws_iam", "aws_network"]
+
+    for subdir_name in generator_subdirs:
+        subdir_path = generators_dir / subdir_name
+        if subdir_path.exists():
+            for module_info in pkgutil.iter_modules([str(subdir_path)]):
+                module_name = f"{__package__}.{subdir_name}.{module_info.name}"
+                try:
+                    importlib.import_module(module_name)
+                    logger.debug(f"Successfully loaded generator module: {module_name}")
+                except Exception as e:
+                    logger.error(
+                        f"Failed to load generator module {module_name}: {str(e)}"
+                    )
+        else:
+            logger.warning(f"Generator directory not found at {subdir_path}")
 
     # List all registered generators after loading
     registered_types = list(HCLGeneratorRegistry._generators.keys())

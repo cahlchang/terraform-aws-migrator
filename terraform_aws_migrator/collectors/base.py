@@ -69,6 +69,11 @@ class ResourceCollector(ABC):
         """Convert AWS tags list to dictionary"""
         return {tag["Key"]: tag["Value"] for tag in tags} if tags else {}
 
+    @classmethod
+    def get_resource_service_mappings(cls) -> Dict[str, str]:
+        """Return dictionary of resource type to service name mappings"""
+        return {}
+
     def build_arn(self, resource_type: str, resource_id: str) -> str:
         """Build ARN for a resource"""
         service = self.get_service_name()

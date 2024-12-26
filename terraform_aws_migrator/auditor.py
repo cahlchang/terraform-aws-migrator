@@ -72,25 +72,21 @@ class AWSResourceAuditor:
             logger.debug(f"Getting all collectors: {len(collectors)}")
             return collectors
 
-        # aws_iam_role_policy_attachment -> "iam"
-        parts = self.target_resource_type.split("_")
-        if len(parts) < 2:
-            logger.error(f"Invalid resource type format: {self.target_resource_type}")
-            return []
-
-        # "aws_iam_*" -> "iam"
-        service_name = parts[1]
-        logger.debug(
-            f"Looking for collectors for service: {service_name} - Found: {[c.__class__.__name__ for c in collectors]}"
-        )
-
+        # get mappings from collectors
+        service_name = None
         for collector in collectors:
-            logger.debug(f"Checking collector: {collector.__class__.__name__}")
-            if collector.get_service_name() == service_name:
-                self.resource_type_mappings.update(collector.get_resource_types())
-                logger.debug(
-                    f"Updated mappings from {collector.__class__.__name__}: {collector.get_resource_types()}"
-                )
+            mappings = collector.get_resource_service_mappings()
+            if self.target_resource_type in mappings:
+                service_name = mappings[self.target_resource_type]
+                break
+
+        # if not found, try to extract service name from target_resource_type
+        if not service_name:
+            parts = self.target_resource_type.split("_")
+            if len(parts) >= 2:
+                service_name = parts[1]
+
+        logger.debug(f"Looking for collectors for service: {service_name}")
 
         relevant_collectors = [
             collector
@@ -98,7 +94,48 @@ class AWSResourceAuditor:
             if collector.get_service_name() == service_name
         ]
 
+        for collector in relevant_collectors:
+            self.resource_type_mappings.update(collector.get_resource_types())
+            logger.debug(
+                f"Updated mappings from {collector.__class__.__name__}: {collector.get_resource_types()}"
+            )
+
         return relevant_collectors
+    #     def _get_relevant_collectors(self):
+    #     """Get collectors based on target_resource_type"""
+    #     collectors = registry.get_collectors(self.session)
+
+    #     if not self.target_resource_type:
+    #         logger.debug(f"Getting all collectors: {len(collectors)}")
+    #         return collectors
+
+    #     # aws_iam_role_policy_attachment -> "iam"
+    #     parts = self.target_resource_type.split("_")
+    #     if len(parts) < 2:
+    #         logger.error(f"Invalid resource type format: {self.target_resource_type}")
+    #         return []
+
+    #     # "aws_iam_*" -> "iam"
+    #     service_name = parts[1]
+    #     logger.debug(
+    #         f"Looking for collectors for service: {service_name} - Found: {[c.__class__.__name__ for c in collectors]}"
+    #     )
+
+    #     for collector in collectors:
+    #         logger.debug(f"Checking collector: {collector.__class__.__name__}")
+    #         if collector.get_service_name() == service_name:
+    #             self.resource_type_mappings.update(collector.get_resource_types())
+    #             logger.debug(
+    #                 f"Updated mappings from {collector.__class__.__name__}: {collector.get_resource_types()}"
+    #             )
+
+    #     relevant_collectors = [
+    #         collector
+    #         for collector in collectors
+    #         if collector.get_service_name() == service_name
+    #     ]
+
+    #     return relevant_collectors
 
     def audit_specific_resource(
         self, tf_dir: str, target_resource_type: str

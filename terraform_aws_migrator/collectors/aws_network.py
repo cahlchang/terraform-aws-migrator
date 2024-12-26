@@ -3,6 +3,10 @@
 from typing import Dict, List, Any
 from .base import ResourceCollector, register_collector
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @register_collector
 class APIGatewayCollector(ResourceCollector):
@@ -46,7 +50,7 @@ class APIGatewayV2Collector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_apigatewayv2_api": "API Gateway HTTP/WebSocket APIs"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:
@@ -78,7 +82,7 @@ class Route53Collector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_route53_zone": "Route 53 Hosted Zones"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:
@@ -115,7 +119,7 @@ class CloudFrontCollector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_cloudfront_distribution": "CloudFront Distributions"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:
@@ -158,7 +162,16 @@ class LoadBalancerV2Collector(ResourceCollector):
             "aws_lb_listener_rule": "Routing rules for ALB listeners",
         }
 
-    def collect(self) -> List[Dict[str, Any]]:
+    @classmethod
+    def get_resource_service_mappings(cls) -> Dict[str, str]:
+        return {
+            "aws_lb_target_group": "elbv2",
+            "aws_lb": "elbv2",
+            "aws_lb_listener": "elbv2",
+            "aws_lb_listener_rule": "elbv2",
+        }
+
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:
@@ -228,15 +241,17 @@ class LoadBalancerV2Collector(ResourceCollector):
             print(f"Error collecting load balancers: {e}")
         return resources
 
+
     def _collect_target_groups(self) -> List[Dict[str, Any]]:
         """Collect Target Groups and their attachments"""
         resources = []
         try:
+            # Collect Target Groups
             paginator = self.client.get_paginator("describe_target_groups")
             for page in paginator.paginate():
                 for tg in page["TargetGroups"]:
-                    # Get tags
                     try:
+                        # Get tags
                         tags_response = self.client.describe_tags(
                             ResourceArns=[tg["TargetGroupArn"]]
                         )
@@ -248,55 +263,70 @@ class LoadBalancerV2Collector(ResourceCollector):
                     except Exception:
                         tags = []
 
-                    # Get targets (attachments)
-                    try:
-                        targets_response = self.client.describe_target_health(
-                            TargetGroupArn=tg["TargetGroupArn"]
-                        )
-                        targets = targets_response.get("TargetHealthDescriptions", [])
-                    except Exception:
-                        targets = []
-
-                    resources.append(
-                        {
-                            "type": "aws_lb_target_group",
-                            "id": tg["TargetGroupName"],
-                            "arn": tg["TargetGroupArn"],
-                            "tags": tags,
-                            "details": {
-                                "protocol": tg.get("Protocol"),
-                                "port": tg.get("Port"),
-                                "vpc_id": tg.get("VpcId"),
-                                "target_type": tg.get("TargetType"),
-                                "health_check": {
-                                    "protocol": tg.get("HealthCheckProtocol"),
-                                    "port": tg.get("HealthCheckPort"),
-                                    "path": tg.get("HealthCheckPath"),
-                                    "interval": tg.get("HealthCheckIntervalSeconds"),
-                                    "timeout": tg.get("HealthCheckTimeoutSeconds"),
-                                    "healthy_threshold": tg.get(
-                                        "HealthyThresholdCount"
-                                    ),
-                                    "unhealthy_threshold": tg.get(
-                                        "UnhealthyThresholdCount"
-                                    ),
-                                },
-                                "targets": [
-                                    {
-                                        "id": target["Target"]["Id"],
-                                        "port": target["Target"].get("Port"),
-                                        "health": target.get("TargetHealth", {}).get(
-                                            "State"
-                                        ),
-                                    }
-                                    for target in targets
-                                ],
-                            },
+                    # Build health check configuration
+                    health_check = None
+                    if tg.get("HealthCheckEnabled"):
+                        health_check = {
+                            "enabled": True,
+                            "path": tg.get("HealthCheckPath", "/"),
+                            "interval": tg.get("HealthCheckIntervalSeconds"),
+                            "timeout": tg.get("HealthCheckTimeoutSeconds"),
+                            "healthy_threshold": tg.get("HealthyThresholdCount"),
+                            "unhealthy_threshold": tg.get("UnhealthyThresholdCount"),
+                            "matcher": tg.get("Matcher", {}).get("HttpCode", "200"),
                         }
-                    )
+                        if tg.get("HealthCheckProtocol"):
+                            health_check["protocol"] = tg["HealthCheckProtocol"]
+                        if tg.get("HealthCheckPort"):
+                            health_check["port"] = tg["HealthCheckPort"]
+
+                    # Build resource details
+                    resource = {
+                        "type": "aws_lb_target_group",
+                        "id": tg["TargetGroupName"],
+                        "arn": tg["TargetGroupArn"],
+                        "protocol": tg.get("Protocol"),
+                        "port": tg.get("Port"),
+                        "vpc_id": tg.get("VpcId"),
+                        "target_type": tg.get("TargetType"),
+                        "tags": tags,
+                    }
+
+                    # Add target group attributes
+                    try:
+                        attrs = self.client.describe_target_group_attributes(
+                            TargetGroupArn=tg["TargetGroupArn"]
+                        )["Attributes"]
+
+                        for attr in attrs:
+                            if attr["Key"] == "deregistration_delay.timeout_seconds":
+                                resource["deregistration_delay"] = int(attr["Value"])
+                            elif attr["Key"] == "lambda.multi_value_headers.enabled":
+                                resource["lambda_multi_value_headers_enabled"] = (
+                                    attr["Value"].lower() == "true"
+                                )
+                            elif attr["Key"] == "proxy_protocol_v2.enabled":
+                                resource["proxy_protocol_v2"] = (
+                                    attr["Value"].lower() == "true"
+                                )
+                            elif attr["Key"] == "slow_start.duration_seconds":
+                                resource["slow_start"] = int(attr["Value"])
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to get target group attributes for {tg['TargetGroupName']}: {str(e)}"
+                        )
+
+                    # Add health check configuration if any
+                    if health_check:
+                        resource["health_check"] = health_check
+
+                    resources.append(resource)
+
         except Exception as e:
-            print(f"Error collecting target groups: {e}")
+            logger.error(f"Error collecting target groups: {str(e)}", exc_info=True)
+
         return resources
+
 
     def _collect_listeners_and_rules(self) -> List[Dict[str, Any]]:
         """Collect Listeners, Rules, and Certificates"""
@@ -395,7 +425,7 @@ class ClassicLoadBalancerCollector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_elb": "Legacy Load Balancers"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
         try:
             paginator = self.client.get_paginator("describe_load_balancers")
