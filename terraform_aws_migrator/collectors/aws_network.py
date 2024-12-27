@@ -183,9 +183,11 @@ class LoadBalancerV2Collector(ResourceCollector):
             tg_resources = self._collect_target_groups()
             resources.extend(tg_resources)
 
-            # Collect Listeners and Rules
-            listener_resources = self._collect_listeners_and_rules()
-            resources.extend(listener_resources)
+            # Collect Listeners
+            resources.extend(self._collect_listeners())
+
+            # Collect Listener Rules
+            resources.extend(self._collect_listener_rules())
 
             if self.progress_callback:
                 self.progress_callback("elbv2", "Completed", len(resources))
@@ -328,22 +330,16 @@ class LoadBalancerV2Collector(ResourceCollector):
         return resources
 
 
-    def _collect_listeners_and_rules(self) -> List[Dict[str, Any]]:
-        """Collect Listeners, Rules, and Certificates"""
+    def _collect_listeners(self) -> List[Dict[str, Any]]:
+        """Collect Listeners for ALB/NLB"""
         resources = []
         try:
-            # First get all load balancers
             paginator = self.client.get_paginator("describe_load_balancers")
             for page in paginator.paginate():
                 for lb in page["LoadBalancers"]:
-                    # Get listeners for each load balancer
                     try:
-                        listener_paginator = self.client.get_paginator(
-                            "describe_listeners"
-                        )
-                        for listener_page in listener_paginator.paginate(
-                            LoadBalancerArn=lb["LoadBalancerArn"]
-                        ):
+                        listener_paginator = self.client.get_paginator("describe_listeners")
+                        for listener_page in listener_paginator.paginate(LoadBalancerArn=lb["LoadBalancerArn"]):
                             for listener in listener_page["Listeners"]:
                                 # Get tags
                                 try:
@@ -358,60 +354,85 @@ class LoadBalancerV2Collector(ResourceCollector):
                                 except Exception:
                                     tags = []
 
-                                # Get rules
+                                resources.append({
+                                    "type": "aws_lb_listener",
+                                    "id": listener["ListenerArn"].split("/")[-1],
+                                    "arn": listener["ListenerArn"],
+                                    "tags": tags,
+                                    "details": {
+                                        "load_balancer_arn": lb["LoadBalancerArn"],
+                                        "port": listener.get("Port"),
+                                        "protocol": listener.get("Protocol"),
+                                        "ssl_policy": listener.get("SslPolicy"),
+                                        "certificates": [
+                                            {
+                                                "arn": cert.get("CertificateArn"),
+                                                "is_default": cert.get("IsDefault", False),
+                                            }
+                                            for cert in listener.get("Certificates", [])
+                                        ],
+                                    },
+                                })
+                    except Exception as e:
+                        logger.error(f"Error collecting listeners for LB {lb['LoadBalancerArn']}: {e}")
+        except Exception as e:
+            logger.error(f"Error collecting listeners: {e}")
+        return resources
+
+
+    def _collect_listener_rules(self) -> List[Dict[str, Any]]:
+        """Collect Rules for ALB Listeners"""
+        resources = []
+        try:
+            paginator = self.client.get_paginator("describe_load_balancers")
+            for page in paginator.paginate():
+                for lb in page["LoadBalancers"]:
+                    try:
+                        listener_paginator = self.client.get_paginator("describe_listeners")
+                        for listener_page in listener_paginator.paginate(LoadBalancerArn=lb["LoadBalancerArn"]):
+                            for listener in listener_page["Listeners"]:
                                 try:
                                     rules = self.client.describe_rules(
                                         ListenerArn=listener["ListenerArn"]
                                     ).get("Rules", [])
-                                except Exception:
-                                    rules = []
+                                    
+                                    for rule in rules:
+                                        # Skip default rules
+                                        if rule.get("IsDefault", False):
+                                            continue
+                                            
+                                        # Get rule tags
+                                        try:
+                                            tags_response = self.client.describe_tags(
+                                                ResourceArns=[rule["RuleArn"]]
+                                            )
+                                            tags = (
+                                                tags_response["TagDescriptions"][0]["Tags"]
+                                                if tags_response["TagDescriptions"]
+                                                else []
+                                            )
+                                        except Exception:
+                                            tags = []
 
-                                resources.append(
-                                    {
-                                        "type": "aws_lb_listener",
-                                        "id": listener["ListenerArn"].split("/")[-1],
-                                        "arn": listener["ListenerArn"],
-                                        "tags": tags,
-                                        "details": {
-                                            "load_balancer_arn": lb["LoadBalancerArn"],
-                                            "port": listener.get("Port"),
-                                            "protocol": listener.get("Protocol"),
-                                            "ssl_policy": listener.get("SslPolicy"),
-                                            "certificates": [
-                                                {
-                                                    "arn": cert.get("CertificateArn"),
-                                                    "is_default": cert.get(
-                                                        "IsDefault", False
-                                                    ),
-                                                }
-                                                for cert in listener.get(
-                                                    "Certificates", []
-                                                )
-                                            ],
-                                            "rules": [
-                                                {
-                                                    "arn": rule["RuleArn"],
-                                                    "priority": rule.get("Priority"),
-                                                    "conditions": rule.get(
-                                                        "Conditions", []
-                                                    ),
-                                                    "actions": rule.get("Actions", []),
-                                                }
-                                                for rule in rules
-                                                if rule.get("IsDefault", False)
-                                                is False  # Skip default rules
-                                            ],
-                                        },
-                                    }
-                                )
+                                        resources.append({
+                                            "type": "aws_lb_listener_rule",
+                                            "id": rule["RuleArn"].split("/")[-1],
+                                            "arn": rule["RuleArn"],
+                                            "tags": tags,
+                                            "details": {
+                                                "listener_arn": listener["ListenerArn"],
+                                                "priority": rule.get("Priority"),
+                                                "conditions": rule.get("Conditions", []),
+                                                "actions": rule.get("Actions", []),
+                                            },
+                                        })
+                                except Exception as e:
+                                    logger.error(f"Error collecting rules for listener {listener['ListenerArn']}: {e}")
                     except Exception as e:
-                        print(
-                            f"Error collecting listeners for LB {lb['LoadBalancerArn']}: {e}"
-                        )
+                        logger.error(f"Error collecting rules for LB {lb['LoadBalancerArn']}: {e}")
         except Exception as e:
-            print(f"Error collecting listeners and rules: {e}")
+            logger.error(f"Error collecting listener rules: {e}")
         return resources
-
 
 @register_collector
 class ClassicLoadBalancerCollector(ResourceCollector):
