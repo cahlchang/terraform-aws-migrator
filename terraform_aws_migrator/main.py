@@ -136,10 +136,10 @@ def main():
         else:
             # Normal mode
             auditor = AWSResourceAuditor(exclusion_file=args.ignore_file)
-            unmanaged_resources = auditor.audit_all_resources(args.tf_dir)
+            resources_result = auditor.audit_all_resources(args.tf_dir)
 
             # Format and display the output
-            formatted_output = format_output(unmanaged_resources, args.output)
+            formatted_output = format_output(resources_result["unmanaged"], args.output)
 
             if args.output_file:
                 with open(args.output_file, "w") as f:
