@@ -175,74 +175,81 @@ class LoadBalancerV2Collector(ResourceCollector):
         resources = []
 
         try:
-            # Collect ALB/NLB
-            lb_resources = self._collect_load_balancers()
-            resources.extend(lb_resources)
-
-            # Collect Target Groups
-            tg_resources = self._collect_target_groups()
-            resources.extend(tg_resources)
-
-            # Collect Listeners
-            resources.extend(self._collect_listeners())
-
-            # Collect Listener Rules
-            resources.extend(self._collect_listener_rules())
-
-            if self.progress_callback:
-                self.progress_callback("elbv2", "Completed", len(resources))
+            # If a specific resource type is requested, collect only that type
+            if target_resource_type:
+                if target_resource_type == "aws_lb":
+                    resources.extend(self._collect_load_balancers())
+                elif target_resource_type == "aws_lb_listener":
+                    resources.extend(self._collect_listeners())
+                elif target_resource_type == "aws_lb_listener_rule":
+                    resources.extend(self._collect_listener_rules())
+                elif target_resource_type == "aws_lb_target_group":
+                    resources.extend(self._collect_target_groups())
+            else:
+                # Collect all ALB-related resources
+                resources.extend(self._collect_load_balancers())
+                resources.extend(self._collect_listeners())
+                resources.extend(self._collect_listener_rules())
+                resources.extend(self._collect_target_groups())
 
         except Exception as e:
-            if self.progress_callback:
-                self.progress_callback("elbv2", f"Error: {str(e)}", 0)
+            logger.error(f"Error collecting ALB resources: {str(e)}")
+            raise e
 
         return resources
 
     def _collect_load_balancers(self) -> List[Dict[str, Any]]:
-        """Collect ALB and NLB resources"""
+        """Collect Application Load Balancers"""
         resources = []
         try:
             paginator = self.client.get_paginator("describe_load_balancers")
             for page in paginator.paginate():
                 for lb in page["LoadBalancers"]:
-                    # Get tags
-                    try:
-                        tags_response = self.client.describe_tags(
-                            ResourceArns=[lb["LoadBalancerArn"]]
-                        )
-                        tags = (
-                            tags_response["TagDescriptions"][0]["Tags"]
-                            if tags_response["TagDescriptions"]
-                            else []
-                        )
-                    except Exception:
-                        tags = []
+                    if lb["Type"] == "application":  # Only collect ALBs
+                        try:
+                            # Get tags
+                            tags_response = self.client.describe_tags(
+                                ResourceArns=[lb["LoadBalancerArn"]]
+                            )
+                            tags = (
+                                tags_response["TagDescriptions"][0]["Tags"]
+                                if tags_response["TagDescriptions"]
+                                else []
+                            )
 
-                    resources.append(
-                        {
-                            "type": "aws_lb",
-                            "id": lb["LoadBalancerName"],
-                            "arn": lb["LoadBalancerArn"],
-                            "tags": tags,
-                            "details": {
-                                "type": lb["Type"],  # 'application' or 'network'
-                                "dns_name": lb.get("DNSName"),
-                                "scheme": lb.get("Scheme"),
-                                "vpc_id": lb.get("VpcId"),
-                                "security_groups": lb.get("SecurityGroups", []),
-                                "subnets": [
-                                    az["SubnetId"]
-                                    for az in lb.get("AvailabilityZones", [])
-                                ],
-                                "state": lb.get("State", {}).get("Code"),
-                                "ip_address_type": lb.get("IpAddressType"),
-                            },
-                        }
-                    )
+                            resources.append({
+                                "type": "aws_lb",
+                                "id": lb["LoadBalancerName"],
+                                "arn": lb["LoadBalancerArn"],
+                                "tags": tags,
+                                "details": {
+                                    "dns_name": lb.get("DNSName"),
+                                    "scheme": lb.get("Scheme"),
+                                    "vpc_id": lb.get("VpcId"),
+                                    "idle_timeout": int(
+                                        next(
+                                            (attr["Value"] for attr in self.client.describe_load_balancer_attributes(
+                                                LoadBalancerArn=lb["LoadBalancerArn"]
+                                            )["Attributes"] if attr["Key"] == "idle_timeout.timeout_seconds"),
+                                            60  # default value if not found
+                                        )
+                                    ),
+                                    "security_groups": lb.get("SecurityGroups", []),
+                                    "subnets": [
+                                        az["SubnetId"]
+                                        for az in lb.get("AvailabilityZones", [])
+                                    ],
+                                    "state": lb.get("State", {}).get("Code"),
+                                    "ip_address_type": lb.get("IpAddressType"),
+                                },
+                            })
+                        except Exception as e:
+                            logger.error(f"Error collecting tags for ALB {lb['LoadBalancerName']}: {str(e)}")
+
         except Exception as e:
-            print(f"Error collecting load balancers: {e}")
-        return resources
+            logger.error(f"Error collecting Application Load Balancers: {str(e)}")
 
+        return resources
 
     def _collect_target_groups(self) -> List[Dict[str, Any]]:
         """Collect Target Groups and their attachments"""
