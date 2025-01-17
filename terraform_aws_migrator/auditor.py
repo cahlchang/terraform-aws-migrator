@@ -72,22 +72,19 @@ class AWSResourceAuditor:
             logger.debug(f"Getting all collectors: {len(collectors)}")
             return collectors
 
-        # get mappings from collectors
         service_name = None
         for collector in collectors:
-            mappings = collector.get_resource_service_mappings()
-            if self.target_resource_type in mappings:
-                service_name = mappings[self.target_resource_type]
+            resource_types = collector.get_resource_types()
+            if self.target_resource_type in resource_types:
+                service_name = collector.get_service_name()
+                logger.debug(f"Found service {service_name} for resource type {self.target_resource_type}")
                 break
 
-        # if not found, try to extract service name from target_resource_type
         if not service_name:
-            parts = self.target_resource_type.split("_")
-            if len(parts) >= 2:
-                service_name = parts[1]
+            logger.error(f"No collector found supporting resource type: {self.target_resource_type}")
+            return []
 
-        logger.debug(f"Looking for collectors for service: {service_name}")
-
+        # return collectors for the specific service
         relevant_collectors = [
             collector
             for collector in collectors
@@ -101,7 +98,6 @@ class AWSResourceAuditor:
             )
 
         return relevant_collectors
-
 
     def audit_specific_resource(
         self, tf_dir: str, target_resource_type: str
