@@ -4,6 +4,7 @@ from typing import Dict, List, Any
 from .base import ResourceCollector, register_collector
 
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -338,54 +339,63 @@ class LoadBalancerV2Collector(ResourceCollector):
 
 
     def _collect_listeners(self) -> List[Dict[str, Any]]:
-        """Collect Listeners for ALB/NLB"""
-        resources = []
+        resources:List = []
+        if not hasattr(self, 'client'):
+            logger.error("No ELBv2 client available")
+            return resources
+
         try:
             paginator = self.client.get_paginator("describe_load_balancers")
-            for page in paginator.paginate():
-                for lb in page["LoadBalancers"]:
-                    try:
-                        listener_paginator = self.client.get_paginator("describe_listeners")
-                        for listener_page in listener_paginator.paginate(LoadBalancerArn=lb["LoadBalancerArn"]):
-                            for listener in listener_page["Listeners"]:
-                                # Get tags
-                                try:
-                                    tags_response = self.client.describe_tags(
-                                        ResourceArns=[listener["ListenerArn"]]
-                                    )
-                                    tags = (
-                                        tags_response["TagDescriptions"][0]["Tags"]
-                                        if tags_response["TagDescriptions"]
-                                        else []
-                                    )
-                                except Exception:
-                                    tags = []
-
-                                resources.append({
-                                    "type": "aws_lb_listener",
-                                    "id": listener["ListenerArn"].split("/")[-1],
-                                    "arn": listener["ListenerArn"],
-                                    "tags": tags,
-                                    "details": {
-                                        "load_balancer_arn": lb["LoadBalancerArn"],
-                                        "port": listener.get("Port"),
-                                        "protocol": listener.get("Protocol"),
-                                        "ssl_policy": listener.get("SslPolicy"),
-                                        "certificates": [
-                                            {
-                                                "arn": cert.get("CertificateArn"),
-                                                "is_default": cert.get("IsDefault", False),
-                                            }
-                                            for cert in listener.get("Certificates", [])
-                                        ],
-                                    },
-                                })
-                    except Exception as e:
-                        logger.error(f"Error collecting listeners for LB {lb['LoadBalancerArn']}: {e}")
+            lb_pages = paginator.paginate()
         except Exception as e:
-            logger.error(f"Error collecting listeners: {e}")
-        return resources
+            logger.error(f"Failed to create load balancer paginator: {e}")
+            raise e
 
+        for page in lb_pages:
+            for lb in page.get("LoadBalancers", []):
+                lb_arn = lb.get("LoadBalancerArn")
+                if not lb_arn:
+                    continue
+
+                try:
+                    listener_paginator = self.client.get_paginator("describe_listeners")
+                    listener_pages = listener_paginator.paginate(LoadBalancerArn=lb_arn)
+                except Exception as e:
+                    logger.error(f"Failed to get listeners for LB {lb_arn}: {e}")
+                    raise e
+
+                for listener_page in listener_pages:
+                    for listener in listener_page.get("Listeners", []):
+                        listener_arn = listener.get("ListenerArn")
+                        if not listener_arn:
+                            continue
+
+                        tags = []
+                        try:
+                            tags_response = self.client.describe_tags(
+                                ResourceArns=[listener_arn]
+                            )
+                            if tags_response.get("TagDescriptions"):
+                                tags = tags_response["TagDescriptions"][0].get("Tags", [])
+                        except Exception as e:
+                            logger.debug(f"Failed to get tags for listener {listener_arn}: {e}")
+
+                        # Create resource with all available information
+                        resources.append({
+                            "type": "aws_lb_listener",
+                            "id": listener_arn.split("/")[-1],
+                            "arn": listener_arn,
+                            "tags": tags,
+                            "details": {
+                                "load_balancer_arn": lb_arn,
+                                "port": listener.get("Port"),
+                                "protocol": listener.get("Protocol"),
+                                "ssl_policy": listener.get("SslPolicy"),
+                                "certificates": listener.get("Certificates", []),
+                                "actions": listener.get("DefaultActions", [])
+                            }
+                        })
+        return resources
 
     def _collect_listener_rules(self) -> List[Dict[str, Any]]:
         """Collect Rules for ALB Listeners"""

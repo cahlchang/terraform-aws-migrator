@@ -54,7 +54,7 @@ class SecretsManagerCollector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_secretsmanager_secret": "Secrets Manager Secrets"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:

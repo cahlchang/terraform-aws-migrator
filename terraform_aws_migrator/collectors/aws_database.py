@@ -70,7 +70,7 @@ class DynamoDBCollector(ResourceCollector):
             "aws_dynamodb_table": "DynamoDB Tables"
         }
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:
@@ -109,7 +109,7 @@ class ElastiCacheCollector(ResourceCollector):
             "aws_elasticache_replication_group": "ElastiCache Replication Groups"
         }
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:

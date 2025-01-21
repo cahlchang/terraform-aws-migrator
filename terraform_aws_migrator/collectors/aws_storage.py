@@ -55,7 +55,7 @@ class EFSCollector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_efs_file_system": "EFS File Systems"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:
@@ -112,7 +112,7 @@ class EBSCollector(ResourceCollector):
         # Volume is attached and all attachments have DeleteOnTermination=True
         return False
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:
