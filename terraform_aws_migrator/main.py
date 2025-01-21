@@ -1,3 +1,5 @@
+# terraform_aws_migrator/main.py
+
 import argparse
 import logging
 import traceback
@@ -10,7 +12,6 @@ from terraform_aws_migrator.generators import HCLGeneratorRegistry
 
 def setup_logging(debug: bool = False):
     """Configure logging settings"""
-
     # Always suppress boto3/botocore logs unless in debug mode
     logging.getLogger("boto3").setLevel(logging.WARNING)
     logging.getLogger("botocore").setLevel(logging.WARNING)
@@ -31,7 +32,9 @@ def main():
     )
     parser.add_argument(
         "-t",
-        "--tf-dir", type=str, help="Directory containing Terraform files"
+        "--tf-dir",
+        type=str,
+        help="Directory containing Terraform files"
     )
     parser.add_argument(
         "--output",
@@ -46,7 +49,9 @@ def main():
         help="Output file path (optional, defaults to stdout)",
     )
     parser.add_argument(
-        "--list-resources", action="store_true", help="List supported resource types"
+        "--list-resources",
+        action="store_true",
+        help="List supported resource types"
     )
     parser.add_argument(
         "-i",
@@ -55,22 +60,27 @@ def main():
         help="Path to resource exclusion file (default: .tfignore)",
         metavar="FILE",
     )
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-
-    # HCL generation arguments
-    parser.add_argument(
-        "--generate", action="store_true", help="Generate HCL for unmanaged resources"
-    )
     parser.add_argument(
         "--type",
         type=str,
-        help="Resource type to generate HCL for (e.g., aws_iam_role)",
+        help="Resource type to audit/generate (e.g., aws_iam_role)",
+    )
+    parser.add_argument(
+        "--generate",
+        action="store_true",
+        help="Generate HCL for unmanaged resources"
     )
     parser.add_argument(
         "--module-prefix",
         type=str,
         help="Module prefix for import commands (e.g., 'my_module')"
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging"
+    )
+
     args = parser.parse_args()
     setup_logging(args.debug)
     console = Console(stderr=True)
@@ -101,11 +111,21 @@ def main():
                 return 1
 
             auditor = AWSResourceAuditor(
-                exclusion_file=args.ignore_file, target_resource_type=args.type
+                exclusion_file=args.ignore_file,
+                target_resource_type=args.type
             )
-            unmanaged_resources = auditor.audit_specific_resource(
-                args.tf_dir, args.type
-            )
+            
+            resources_result = auditor.audit_resources(args.tf_dir)
+            unmanaged_resources = {}
+            
+            # Extract unmanaged resources for the specified type
+            for service_resources in resources_result["unmanaged"].values():
+                for resource in service_resources:
+                    if resource.get("type") == args.type:
+                        resource_id = resource.get("id")
+                        if resource_id:
+                            unmanaged_resources[resource_id] = resource
+
             # Get generator with module prefix if specified
             generator = HCLGeneratorRegistry.get_generator(
                 args.type,
@@ -115,28 +135,30 @@ def main():
 
             import_txt = ""
             for resource_id, resource in unmanaged_resources.items():
-                if isinstance(resource, dict):
-                    hcl = generator.generate(resource)
-                    import_cmd = generator.generate_import(resource)
-                    if hcl:
-                        if args.output_file:
-                            with open(args.output_file, "a") as f:
-                                f.write(hcl + "\n\n")
-                        else:
-                            console.print(hcl)
-                    if import_cmd:
-                        import_txt += import_cmd + "\n"
+                hcl = generator.generate(resource)
+                import_cmd = generator.generate_import(resource)
+                if hcl:
+                    if args.output_file:
+                        with open(args.output_file, "a") as f:
+                            f.write(hcl + "\n\n")
+                    else:
+                        console.print(hcl)
+                if import_cmd:
+                    import_txt += import_cmd + "\n"
 
-            if args.output_file:
+            if args.output_file and import_txt:
                 with open(args.output_file, "a") as f:
                     f.write(import_txt + "\n\n")
-            else:
+            elif import_txt:
                 console.print(import_txt)
 
         else:
-            # Normal mode
-            auditor = AWSResourceAuditor(exclusion_file=args.ignore_file)
-            resources_result = auditor.audit_all_resources(args.tf_dir)
+            # Normal mode - now supports --type for filtering
+            auditor = AWSResourceAuditor(
+                exclusion_file=args.ignore_file,
+                target_resource_type=args.type
+            )
+            resources_result = auditor.audit_resources(args.tf_dir)
 
             # Format and display the output
             formatted_output = format_output(resources_result["unmanaged"], args.output)
@@ -147,7 +169,6 @@ def main():
                 console.print(f"[green]Detection results written to {args.output_file}")
             else:
                 console.print(formatted_output)
-
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Detection cancelled by user")
