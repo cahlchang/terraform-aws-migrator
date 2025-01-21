@@ -23,25 +23,94 @@ class EC2Collector(ResourceCollector):
 
     def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
-
         try:
-            # EC2 instances
+            if not target_resource_type or target_resource_type == "aws_instance":
+                resources.extend(self._collect_ec2_instances())
+
+            if not target_resource_type or target_resource_type == "aws_vpc":
+                resources.extend(self._collect_vpcs())
+
+            if not target_resource_type or target_resource_type == "aws_security_group":
+                resources.extend(self._collect_security_groups())
+
+        except Exception as e:
+            logger.error(f"Error collecting EC2 resources: {str(e)}")
+
+        return resources
+
+    def _collect_ec2_instances(self) -> List[Dict[str, Any]]:
+        """Collect EC2 instance resources"""
+        resources = []
+        try:
             paginator = self.client.get_paginator("describe_instances")
             for page in paginator.paginate():
                 for reservation in page["Reservations"]:
                     for instance in reservation["Instances"]:
-                        resources.append(
-                            {
-                                "type": "aws_instance",
-                                "id": instance["InstanceId"],
-                                "arn": self.build_arn(
-                                    "instance", instance["InstanceId"]
+                        instance_details = {
+                            "type": "aws_instance",
+                            "id": instance["InstanceId"],
+                            "arn": self.build_arn("instance", instance["InstanceId"]),
+                            "tags": instance.get("Tags", []),
+                            "details": {
+                                "instance_type": instance.get("InstanceType"),
+                                "ami": instance.get("ImageId"),
+                                "availability_zone": instance.get("Placement", {}).get(
+                                    "AvailabilityZone"
                                 ),
-                                "tags": instance.get("Tags", []),
-                            }
-                        )
+                                "subnet_id": instance.get("SubnetId"),
+                                "vpc_id": instance.get("VpcId"),
+                                "key_name": instance.get("KeyName"),
+                                "vpc_security_group_ids": [
+                                    sg["GroupId"]
+                                    for sg in instance.get("SecurityGroups", [])
+                                ],
+                                "ebs_optimized": instance.get("EbsOptimized", False),
+                                "monitoring": instance.get("Monitoring", {}).get(
+                                    "State"
+                                )
+                                == "enabled",
+                            },
+                        }
 
-            # VPCs
+                        # Get block device mapping
+                        block_devices = []
+                        for device in instance.get("BlockDeviceMappings", []):
+                            if "Ebs" in device:
+                                block_devices.append(
+                                    {
+                                        "device_name": device["DeviceName"],
+                                        "volume_id": device["Ebs"]["VolumeId"],
+                                        "delete_on_termination": device["Ebs"].get(
+                                            "DeleteOnTermination", True
+                                        ),
+                                    }
+                                )
+                        if block_devices:
+                            instance_details["details"]["block_devices"] = block_devices
+
+                        # Get IPs
+                        if instance.get("PublicIpAddress"):
+                            instance_details["details"]["public_ip"] = instance[
+                                "PublicIpAddress"
+                            ]
+                        if instance.get("PrivateIpAddress"):
+                            instance_details["details"]["private_ip"] = instance[
+                                "PrivateIpAddress"
+                            ]
+
+                        resources.append(instance_details)
+
+            logger.debug(f"Found {len(resources)} EC2 instances")
+            return resources
+
+        except Exception as e:
+            logger.error(f"Error collecting EC2 instances: {str(e)}")
+            return []
+
+    def _collect_vpcs(self) -> List[Dict[str, Any]]:
+        """Collect VPC resources"""
+        resources = []
+        try:
             for vpc in self.client.describe_vpcs()["Vpcs"]:
                 resources.append(
                     {
@@ -49,10 +118,27 @@ class EC2Collector(ResourceCollector):
                         "id": vpc["VpcId"],
                         "arn": self.build_arn("vpc", vpc["VpcId"]),
                         "tags": vpc.get("Tags", []),
+                        "details": {
+                            "cidr_block": vpc.get("CidrBlock"),
+                            "instance_tenancy": vpc.get("InstanceTenancy"),
+                            "enable_dns_support": vpc.get("EnableDnsSupport"),
+                            "enable_dns_hostnames": vpc.get("EnableDnsHostnames"),
+                            "is_default": vpc.get("IsDefault", False),
+                        },
                     }
                 )
 
-            # Security Groups
+            logger.debug(f"Found {len(resources)} VPCs")
+            return resources
+
+        except Exception as e:
+            logger.error(f"Error collecting VPCs: {str(e)}")
+            return []
+
+    def _collect_security_groups(self) -> List[Dict[str, Any]]:
+        """Collect security group resources"""
+        resources = []
+        try:
             for sg in self.client.describe_security_groups()["SecurityGroups"]:
                 resources.append(
                     {
@@ -60,13 +146,62 @@ class EC2Collector(ResourceCollector):
                         "id": sg["GroupId"],
                         "arn": self.build_arn("security-group", sg["GroupId"]),
                         "tags": sg.get("Tags", []),
+                        "details": {
+                            "name": sg["GroupName"],
+                            "description": sg.get("Description", ""),
+                            "vpc_id": sg.get("VpcId"),
+                            "revoke_rules_on_delete": False,  # デフォルト値としてFalseを設定
+                            "ingress_rules": [
+                                {
+                                    "from_port": rule.get("FromPort"),
+                                    "to_port": rule.get("ToPort"),
+                                    "protocol": rule.get("IpProtocol"),
+                                    "cidr_blocks": [
+                                        ip_range["CidrIp"]
+                                        for ip_range in rule.get("IpRanges", [])
+                                    ],
+                                    "ipv6_cidr_blocks": [
+                                        ip_range["CidrIpv6"]
+                                        for ip_range in rule.get("Ipv6Ranges", [])
+                                    ],
+                                    "security_groups": [
+                                        sg_ref["GroupId"]
+                                        for sg_ref in rule.get("UserIdGroupPairs", [])
+                                    ],
+                                }
+                                for rule in sg.get("IpPermissions", [])
+                            ],
+                            "egress_rules": [
+                                {
+                                    "from_port": rule.get("FromPort"),
+                                    "to_port": rule.get("ToPort"),
+                                    "protocol": rule.get("IpProtocol"),
+                                    "cidr_blocks": [
+                                        ip_range["CidrIp"]
+                                        for ip_range in rule.get("IpRanges", [])
+                                    ],
+                                    "ipv6_cidr_blocks": [
+                                        ip_range["CidrIpv6"]
+                                        for ip_range in rule.get("Ipv6Ranges", [])
+                                    ],
+                                    "security_groups": [
+                                        sg_ref["GroupId"]
+                                        for sg_ref in rule.get("UserIdGroupPairs", [])
+                                    ],
+                                }
+                                for rule in sg.get("IpPermissionsEgress", [])
+                            ],
+                        },
                     }
                 )
 
-        except Exception as e:
-            logger.error(f"Error collecting EC2 resources: {str(e)}")
+            logger.debug(f"Found {len(resources)} security groups")
+            return resources
 
-        return resources
+        except Exception as e:
+            logger.error(f"Error collecting security groups: {str(e)}")
+            return []
+
 
 @register_collector
 class ECSCollector(ResourceCollector):
@@ -78,7 +213,7 @@ class ECSCollector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_ecs_cluster": "ECS Clusters", "aws_ecs_service": "ECS Services"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
 
         try:
@@ -133,7 +268,7 @@ class LambdaCollector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {"aws_lambda_function": "Lambda Functions"}
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
         resources = []
         try:
             paginator = self.client.get_paginator("list_functions")
