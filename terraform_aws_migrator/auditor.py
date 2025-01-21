@@ -1,5 +1,3 @@
-# terraform_aws_migrator/auditor.py
-
 import time
 from typing import Dict, List, Set, Any
 import boto3
@@ -96,7 +94,7 @@ class AWSResourceAuditor:
     def audit_resources(self, tf_dir: str) -> Dict[str, List[Dict[str, Any]]]:
         """Detect AWS resources that are not managed by Terraform, optionally filtered by type"""
         self.start_time = time.time()
-        result:Dict[str, List[Dict[str, Any]]] = {"managed": {}, "unmanaged": {}}
+        result: Dict[str, List[Dict[str, Any]]] = {"managed": {}, "unmanaged": {}}
 
         def get_elapsed_time() -> str:
             elapsed = int(time.time() - self.start_time)
