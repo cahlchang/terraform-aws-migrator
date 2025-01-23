@@ -282,24 +282,70 @@ class LambdaCollector(ResourceCollector):
                     except Exception:
                         tags = {}
 
-                    resources.append(
-                        {
-                            "type": "aws_lambda_function",
-                            "id": function["FunctionName"],
-                            "arn": function["FunctionArn"],
-                            "tags": tags,
-                            "details": {
-                                "runtime": function.get("Runtime"),
-                                "role": function.get("Role"),
-                                "handler": function.get("Handler"),
-                                "description": function.get("Description"),
-                                "memory_size": function.get("MemorySize"),
-                                "timeout": function.get("Timeout"),
-                                "last_modified": str(function.get("LastModified")),
-                                "version": function.get("Version"),
-                            },
+                    details = {
+                        "runtime": function.get("Runtime"),
+                        "role": function.get("Role"),
+                        "handler": function.get("Handler"),
+                        "description": function.get("Description"),
+                        "memory_size": function.get("MemorySize"),
+                        "timeout": function.get("Timeout"),
+                        "last_modified": str(function.get("LastModified")),
+                        "version": function.get("Version"),
+                        "package_type": function.get("PackageType"),
+                        "publish": function.get("Publish", False),
+                    }
+
+                    if function.get("PackageType") == "Image":
+                        try:
+                            function_detail = self.client.get_function(FunctionName=function["FunctionName"])
+                            code = function_detail.get("Code", {})
+                            logger.debug(f"Lambda function code info: {code}")
+                            details["image_uri"] = code.get("ImageUri")
+                            if image_config := function_detail.get("ImageConfigResponse"):
+                                logger.debug(f"Lambda function image config: {image_config}")
+                        except Exception as e:
+                            logger.error(f"Error getting function details: {str(e)}")
+                            details["image_config"] = {
+                                "command": image_config.get("ImageConfig", {}).get("Command"),
+                                "entry_point": image_config.get("ImageConfig", {}).get("EntryPoint"),
+                                "working_directory": image_config.get("ImageConfig", {}).get("WorkingDirectory"),
+                            }
+
+                    if env_vars := function.get("Environment", {}).get("Variables"):
+                        details["environment"] = {"variables": env_vars}
+
+                    if vpc_config := function.get("VpcConfig"):
+                        details["vpc_config"] = {
+                            "subnet_ids": vpc_config.get("SubnetIds", []),
+                            "security_group_ids": vpc_config.get("SecurityGroupIds", []),
                         }
-                    )
+
+                    if layers := function.get("Layers"):
+                        details["layers"] = [layer.get("Arn") for layer in layers]
+
+                    if dlq := function.get("DeadLetterConfig"):
+                        details["dead_letter_config"] = {
+                            "target_arn": dlq.get("TargetArn")
+                        }
+
+                    if tracing := function.get("TracingConfig"):
+                        details["tracing_config"] = {
+                            "mode": tracing.get("Mode")
+                        }
+
+                    if fs_configs := function.get("FileSystemConfigs", []):
+                        details["file_system_config"] = [{
+                            "arn": fs.get("Arn"),
+                            "local_mount_path": fs.get("LocalMountPath")
+                        } for fs in fs_configs]
+
+                    resources.append({
+                        "type": "aws_lambda_function",
+                        "id": function["FunctionName"],
+                        "arn": function["FunctionArn"],
+                        "tags": tags,
+                        "details": details,
+                    })
         except Exception as e:
             print(f"Error collecting Lambda functions: {str(e)}")
 
