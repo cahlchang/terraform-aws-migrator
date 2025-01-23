@@ -150,7 +150,7 @@ class EC2Collector(ResourceCollector):
                             "name": sg["GroupName"],
                             "description": sg.get("Description", ""),
                             "vpc_id": sg.get("VpcId"),
-                            "revoke_rules_on_delete": False,  # デフォルト値としてFalseを設定
+                            "revoke_rules_on_delete": False, #default value
                             "ingress_rules": [
                                 {
                                     "from_port": rule.get("FromPort"),
