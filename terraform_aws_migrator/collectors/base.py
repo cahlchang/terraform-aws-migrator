@@ -99,13 +99,22 @@ class CollectorRegistry:
         self.collectors.append(collector_class)
         return collector_class
 
-    def get_collectors(self, session: boto3.Session) -> List[ResourceCollector]:
-        """Get all collector instances with the given session"""
+    def get_collectors(self, session: boto3.Session, target_type: str = "") -> List[ResourceCollector]:
+        """
+        Get collector instances with the given session, optionally filtered by target type.
+        target_type can be either a full resource type (e.g. aws_s3_bucket) or a service category (e.g. s3)
+        """
         logger.debug(f"Getting collectors, total registered: {len(self.collectors)}")
         instances = []
         for collector_cls in self.collectors:
             try:
                 collector = collector_cls(session)
+                # category or resource type filter
+                if target_type:
+                    resource_types = collector.get_resource_types()
+                    service_name = collector.get_service_name()
+                    if target_type != service_name and target_type not in resource_types:
+                        continue
                 instances.append(collector)
                 logger.debug(f"Initialized collector: {collector_cls.__name__}")
             except Exception as e:

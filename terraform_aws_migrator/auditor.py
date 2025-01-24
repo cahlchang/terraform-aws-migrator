@@ -73,15 +73,19 @@ class AWSResourceAuditor:
         matching_collectors = []
         for collector in collectors:
             resource_types = collector.get_resource_types()
-            if self.target_resource_type in resource_types:
+            service_name = collector.get_service_name()
+            
+            # apply category filter
+            if not self.target_resource_type.startswith("aws_"):
+                if self.target_resource_type == service_name:
+                    matching_collectors.append(collector)
+            # apply resource type filter
+            elif self.target_resource_type in resource_types:
                 matching_collectors.append(collector)
-                logger.debug(
-                    f"Found collector for {self.target_resource_type}: {collector.__class__.__name__}"
-                )
 
         if not matching_collectors:
             logger.error(
-                f"No collector found supporting resource type: {self.target_resource_type}"
+                f"No collector found supporting resource type or service: {self.target_resource_type}"
             )
             return []
 
@@ -212,17 +216,83 @@ class AWSResourceAuditor:
 
         # Create a set of managed resource identifiers
         for resource in managed_resources.values():
+            resource_type = resource.get("type")
             identifier = resource.get("arn") or resource.get("id")
             if identifier:
                 managed_identifiers.add(identifier)
+                # S3Policy (TODO: Refactor this)
+                if resource_type == "aws_s3_bucket_policy":
+                    bucket_name = identifier
+                    bucket_arn = f"arn:aws:s3:::{bucket_name}"
+                    managed_identifiers.add(bucket_name)
+                    managed_identifiers.add(bucket_arn)
+                    logger.debug(f"Added S3 bucket policy identifiers: {bucket_name}, {bucket_arn}")
 
         for resource in resources:
+            resource_type = resource.get("type")
             identifier = resource.get("arn") or resource.get("id")
-            if identifier and identifier not in managed_identifiers:
+            
+            # TODO: Refactor this
+            if resource_type in ["aws_s3_bucket_policy", "aws_s3_bucket_acl"]:
+                bucket_name = resource.get("id")
+                bucket_arn = f"arn:aws:s3:::{bucket_name}"
+                logger.info(f"Checking S3 {resource_type}: {bucket_name}")
+                
+                is_managed = False
+                resource_id_in_state = False
+                for state_resource in managed_resources.values():
+                    state_type = state_resource.get("type")
+                    state_id = state_resource.get("id")
+                    
+                    if state_type == resource_type and state_id == bucket_name:
+                        logger.info(f"Found exact match for {resource_type}:{bucket_name} in state")
+                        is_managed = True
+                        break
+                    
+                    if state_type == resource_type:
+                        from terraform_aws_migrator.generators.aws_storage.s3 import S3BucketACLGenerator
+                        generator = S3BucketACLGenerator()
+                        state_resource_name = generator._generate_resource_name(state_id)
+                        current_resource_name = generator._generate_resource_name(bucket_name)
+                        if state_resource_name == current_resource_name:
+                            logger.info(f"Resource name collision detected for {bucket_name}")
+                            resource_id_in_state = True
+                            break
+                
+                if resource_id_in_state:
+                    logger.info(f"Skipping {resource_type} for {bucket_name} due to resource name collision")
+                    continue
+                
+                if not is_managed:
+                    logger.info(f"Found unmanaged {resource_type}: {bucket_name}")
+                    if not self.exclusion_config.should_exclude(resource):
+                        if self.target_resource_type:
+                            if self.target_resource_type.startswith("aws_"):
+                                if resource_type == self.target_resource_type:
+                                    logger.info(f"Adding unmanaged {resource_type}: {bucket_name}")
+                                    unmanaged.append(resource)
+                            else:
+                                if resource_type and resource_type.startswith(f"aws_{self.target_resource_type}_"):
+                                    logger.info(f"Adding unmanaged {resource_type}: {bucket_name}")
+                                    unmanaged.append(resource)
+                        else:
+                            logger.info(f"Adding unmanaged {resource_type}: {bucket_name}")
+                            unmanaged.append(resource)
+                else:
+                    logger.info(f"{resource_type} is managed: {bucket_name}")
+            # common case
+            elif identifier and identifier not in managed_identifiers:
                 if not self.exclusion_config.should_exclude(resource):
                     if self.target_resource_type:
-                        if resource.get("type") == self.target_resource_type:
-                            unmanaged.append(resource)
+                        resource_type = resource.get("type")
+                        if self.target_resource_type.startswith("aws_"):
+                            # complete resource type is specified
+                            if resource_type == self.target_resource_type:
+                                unmanaged.append(resource)
+                        else:
+                            # category is specified
+                            if resource_type and resource_type.startswith(f"aws_{self.target_resource_type}_"):
+                                unmanaged.append(resource)
                     else:
                         unmanaged.append(resource)
 

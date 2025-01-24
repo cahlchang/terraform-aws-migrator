@@ -10,6 +10,8 @@ from terraform_aws_migrator.formatters.output_formatter import format_output
 from terraform_aws_migrator.generators import HCLGeneratorRegistry
 
 
+logger = logging.getLogger(__name__)
+
 def setup_logging(debug: bool = False):
     """Configure logging settings"""
     # Always suppress boto3/botocore logs unless in debug mode
@@ -106,51 +108,161 @@ def main():
 
             if not HCLGeneratorRegistry.is_supported(args.type):
                 console.print(
-                    f"[yellow]Warning: Resource type '{args.type}' is not yet supported for HCL generation"
+                    f"[yellow]Warning: Resource type or category '{args.type}' is not yet supported for HCL generation"
                 )
                 return 1
 
-            auditor = AWSResourceAuditor(
-                exclusion_file=args.ignore_file,
-                target_resource_type=args.type
-            )
-            
-            resources_result = auditor.audit_resources(args.tf_dir)
-            unmanaged_resources = {}
-            
-            # Extract unmanaged resources for the specified type
-            for service_resources in resources_result["unmanaged"].values():
-                for resource in service_resources:
-                    if resource.get("type") == args.type:
-                        resource_id = resource.get("id")
-                        if resource_id:
-                            unmanaged_resources[resource_id] = resource
+            # category mode
+            if not args.type.startswith("aws_"):
+                generators = HCLGeneratorRegistry.get_generators_for_category(args.type)
+                if not generators:
+                    console.print(
+                        f"[yellow]Warning: No generators found for category '{args.type}'"
+                    )
+                    return 1
 
-            # Get generator with module prefix if specified
-            generator = HCLGeneratorRegistry.get_generator(
-                args.type,
-                module_prefix=args.module_prefix
-            )
-            console.print(f"Generating HCL for {len(unmanaged_resources)} {args.type} resources")
+                auditor = AWSResourceAuditor(
+                    exclusion_file=args.ignore_file,
+                    target_resource_type=args.type
+                )
+                
+                resources_result = auditor.audit_resources(args.tf_dir)
+                
+                # Store all HCL and import commands
+                all_hcl = []
+                all_imports = []
 
-            import_txt = ""
-            for resource_id, resource in unmanaged_resources.items():
-                hcl = generator.generate(resource)
-                import_cmd = generator.generate_import(resource)
-                if hcl:
+                # Process resources for each generator in the category
+                for resource_type, generator_class in generators.items():
+                    target_resources = {}
+                    
+                    # Filter resources for this type
+                    for service_name, service_resources in resources_result["unmanaged"].items():
+                        logger.debug(f"Processing service: {service_name} with {len(service_resources)} resources")
+                        for resource in service_resources:
+                            current_type = resource.get("type")
+                            logger.debug(f"Checking resource type: {current_type} against {resource_type}")
+                            if current_type == resource_type:
+                                resource_id = resource.get("id")
+                                if resource_id:
+                                    logger.info(f"Found unmanaged {resource_type}: {resource_id}")
+                                    target_resources[resource_id] = resource
+
+                    if not target_resources:
+                        logger.debug(f"No unmanaged resources found for type: {resource_type}")
+                        continue
+
+                    # Get generator instance
+                    generator = generator_class(
+                        module_prefix=args.module_prefix,
+                        state_reader=auditor.state_reader
+                    )
+
+                    # Collect HCL
+                    type_hcl = []
+                    for resource_id, resource in target_resources.items():
+                        logger.info(f"Generating HCL for {resource.get('type')} - {resource_id}")
+                        logger.debug(f"Resource details: {resource}")
+                        hcl = generator.generate(resource)
+                        if hcl:
+                            logger.info(f"Successfully generated HCL for {resource_id}")
+                            logger.debug(f"Generated HCL:\n{hcl}")
+                            type_hcl.append(hcl)
+                        else:
+                            logger.warning(f"Failed to generate HCL for {resource_id}")
+
+                    if type_hcl:
+                        logger.info(f"Adding {len(type_hcl)} HCL blocks for {resource_type}")
+                        all_hcl.extend(type_hcl)
+                    else:
+                        logger.warning(f"No HCL generated for {resource_type}")
+
+                    # Collect import commands
+                    for resource_id, resource in target_resources.items():
+                        import_cmd = generator.generate_import(resource)
+                        if import_cmd:
+                            all_imports.append(import_cmd)
+
+                # Output all HCL first
+                if all_hcl:
+                    hcl_content = "\n\n".join(all_hcl)
                     if args.output_file:
                         with open(args.output_file, "a") as f:
-                            f.write(hcl + "\n\n")
+                            f.write(hcl_content + "\n\n")
                     else:
-                        console.print(hcl)
-                if import_cmd:
-                    import_txt += import_cmd + "\n"
+                        console.print(hcl_content)
 
-            if args.output_file and import_txt:
-                with open(args.output_file, "a") as f:
-                    f.write(import_txt + "\n\n")
-            elif import_txt:
-                console.print(import_txt)
+                # Then output all import commands
+                if all_imports:
+                    import_content = "\n".join(all_imports)
+                    if args.output_file:
+                        with open(args.output_file, "a") as f:
+                            f.write("\n# Import commands\n" + import_content + "\n")
+                    else:
+                        console.print("\n# Import commands")
+                        console.print(import_content)
+
+            else:
+                # complete resource type mode
+                auditor = AWSResourceAuditor(
+                    exclusion_file=args.ignore_file,
+                    target_resource_type=args.type
+                )
+                
+                resources_result = auditor.audit_resources(args.tf_dir)
+                target_resources = {}
+                
+                # Process only unmanaged resources
+                for service_resources in resources_result["unmanaged"].values():
+                    for resource in service_resources:
+                        if resource.get("type") == args.type:
+                            resource_id = resource.get("id")
+                            if resource_id:
+                                target_resources[resource_id] = resource
+
+                # Get generator with module prefix and state reader if specified
+                generator = HCLGeneratorRegistry.get_generator(
+                    args.type,
+                    module_prefix=args.module_prefix,
+                    state_reader=auditor.state_reader
+                )
+
+                console.print(f"Generating HCL for {len(target_resources)} {args.type} resources")
+
+                # Store all HCL and import commands
+                all_hcl = []
+                all_imports = []
+
+                # Collect HCL
+                for resource_id, resource in target_resources.items():
+                    hcl = generator.generate(resource)
+                    if hcl:
+                        all_hcl.append(hcl)
+
+                # Collect import commands
+                for resource_id, resource in target_resources.items():
+                    import_cmd = generator.generate_import(resource)
+                    if import_cmd:
+                        all_imports.append(import_cmd)
+
+                # Output all HCL first
+                if all_hcl:
+                    hcl_content = "\n\n".join(all_hcl)
+                    if args.output_file:
+                        with open(args.output_file, "a") as f:
+                            f.write(hcl_content + "\n\n")
+                    else:
+                        console.print(hcl_content)
+
+                # Then output all import commands
+                if all_imports:
+                    import_content = "\n".join(all_imports)
+                    if args.output_file:
+                        with open(args.output_file, "a") as f:
+                            f.write("\n# Import commands\n" + import_content + "\n")
+                    else:
+                        console.print("\n# Import commands")
+                        console.print(import_content)
 
         else:
             # Normal mode - now supports --type for filtering

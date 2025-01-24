@@ -1,7 +1,7 @@
 # terraform_aws_migrator/generators/base.py
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Type
+from typing import Dict, Any, Optional, Type, Union
 import importlib
 import os
 import pkgutil
@@ -13,14 +13,29 @@ logger = logging.getLogger(__name__)
 class HCLGenerator(ABC):
     """Base class for HCL generators"""
 
-    def __init__(self, module_prefix: Optional[str] = None):
+    def __init__(self, module_prefix: Optional[str] = None, state_reader: Optional[Any] = None):
         """
         Initialize the generator
 
         Args:
             module_prefix (str, optional): Module prefix for import commands
+            state_reader (TerraformStateReader, optional): State reader instance
         """
         self.module_prefix = module_prefix
+        self.state_reader = state_reader
+        self.managed_resources = {}
+        if state_reader:
+            self.managed_resources = state_reader.get_managed_resources("")
+
+    def is_resource_managed(self, resource_type: str, resource_name: str) -> bool:
+        """Check if a resource is managed by Terraform"""
+        if not self.state_reader:
+            return False
+
+        for resource in self.managed_resources.values():
+            if resource.get("type") == resource_type and resource.get("id") == resource_name:
+                return True
+        return False
 
     @classmethod
     @abstractmethod
@@ -59,7 +74,7 @@ class HCLGeneratorRegistry:
 
     @classmethod
     def get_generator(
-        cls, resource_type: str, module_prefix: Optional[str] = None
+        cls, resource_type: str, module_prefix: Optional[str] = None, state_reader: Optional[Any] = None
     ) -> Optional[HCLGenerator]:
         """
         Get a generator instance for the given resource type
@@ -67,6 +82,7 @@ class HCLGeneratorRegistry:
         Args:
             resource_type (str): AWS resource type
             module_prefix (str, optional): Module prefix for import commands
+            state_reader (TerraformStateReader, optional): State reader instance
 
         Returns:
             Optional[HCLGenerator]: Generator instance if supported, None otherwise
@@ -76,16 +92,52 @@ class HCLGeneratorRegistry:
 
         generator_class = cls._generators.get(resource_type)
         if generator_class:
-            return generator_class(module_prefix=module_prefix)
+            return generator_class(module_prefix=module_prefix, state_reader=state_reader)
         return None
 
     @classmethod
     def is_supported(cls, resource_type: str) -> bool:
-        """Check if a resource type is supported"""
+        """
+        Check if a resource type or category is supported
+        Args:
+            resource_type (str): Resource type (e.g., aws_s3_bucket) or category (e.g., s3)
+        """
         if not cls._initialized:
             cls._initialize()
 
-        return resource_type in cls._generators
+        # 完全なリソースタイプの場合
+        if resource_type in cls._generators:
+            return True
+
+        # カテゴリの場合（例：s3）
+        # そのカテゴリに属する任意のリソースタイプが登録されているかチェック
+        for registered_type in cls._generators.keys():
+            if registered_type.startswith(f"aws_{resource_type}_"):
+                return True
+
+        return False
+
+    @classmethod
+    def get_generators_for_category(cls, category: str) -> Dict[str, Type[HCLGenerator]]:
+        """Get all generators for a given category"""
+        if not cls._initialized:
+            cls._initialize()
+
+        logger.info(f"Looking for generators in category: {category}")
+        logger.debug(f"Available generators: {list(cls._generators.keys())}")
+        
+        generators = {
+            resource_type: generator_class
+            for resource_type, generator_class in cls._generators.items()
+            if resource_type.startswith(f"aws_{category}_")
+        }
+        
+        if generators:
+            logger.info(f"Found {len(generators)} generators for category {category}: {list(generators.keys())}")
+        else:
+            logger.warning(f"No generators found for category: {category}")
+        
+        return generators
 
     @classmethod
     def _initialize(cls) -> None:
@@ -122,11 +174,17 @@ class HCLGeneratorRegistry:
                         if (
                             module_name != "terraform_aws_migrator.generators.base"
                         ):  # Skip base.py
-                            importlib.import_module(module_name)
-                            logger.debug(f"Successfully loaded module: {module_name}")
+                            logger.info(f"Attempting to load module: {module_name}")
+                            module = importlib.import_module(module_name)
+                            logger.info(f"Successfully loaded module: {module_name}")
+                            # モジュール内のジェネレータークラスを確認
+                            for attr_name in dir(module):
+                                attr = getattr(module, attr_name)
+                                if isinstance(attr, type) and issubclass(attr, HCLGenerator) and attr != HCLGenerator:
+                                    logger.info(f"Found generator class in {module_name}: {attr_name}")
                     except Exception as e:
-                        logger.debug(
-                            f"Failed to load generator module {module_name}: {e}"
+                        logger.error(
+                            f"Failed to load generator module {module_name}: {str(e)}"
                         )
 
         # Load all modules from the generators directory
