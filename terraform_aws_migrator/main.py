@@ -82,6 +82,16 @@ def main():
         action="store_true",
         help="Enable debug logging"
     )
+    parser.add_argument(
+        "--include-default-vpc",
+        action="store_true",
+        help="Include default VPC in the generation (only applies to aws_vpc resources)"
+    )
+    parser.add_argument(
+        "--include-managed",
+        action="store_true",
+        help="Include resources that are already managed by Terraform in HCL generation"
+    )
 
     args = parser.parse_args()
     setup_logging(args.debug)
@@ -136,17 +146,23 @@ def main():
                 for resource_type, generator_class in generators.items():
                     target_resources = {}
                     
-                    # Filter resources for this type
-                    for service_name, service_resources in resources_result["unmanaged"].items():
-                        logger.debug(f"Processing service: {service_name} with {len(service_resources)} resources")
-                        for resource in service_resources:
-                            current_type = resource.get("type")
-                            logger.debug(f"Checking resource type: {current_type} against {resource_type}")
-                            if current_type == resource_type:
-                                resource_id = resource.get("id")
-                                if resource_id:
-                                    logger.info(f"Found unmanaged {resource_type}: {resource_id}")
-                                    target_resources[resource_id] = resource
+                    # Process both managed and unmanaged resources if include_managed is True
+                    resource_groups = ["unmanaged"]
+                    if args.include_managed:
+                        resource_groups.append("managed")
+                    
+                    for group in resource_groups:
+                        for service_name, service_resources in resources_result[group].items():
+                            logger.debug(f"Processing service: {service_name} with {len(service_resources)} resources")
+                            for resource in service_resources:
+                                current_type = resource.get("type")
+                                logger.debug(f"Checking resource type: {current_type} against {resource_type}")
+                                if current_type == resource_type:
+                                    resource_id = resource.get("id")
+                                    if resource_id:
+                                        status = "managed" if group == "managed" else "unmanaged"
+                                        logger.info(f"Found {status} {resource_type}: {resource_id}")
+                                        target_resources[resource_id] = resource  # Remove unnecessary deepcopy
 
                     if not target_resources:
                         logger.debug(f"No unmanaged resources found for type: {resource_type}")
@@ -162,7 +178,9 @@ def main():
                     type_hcl = []
                     for resource_id, resource in target_resources.items():
                         logger.info(f"Generating HCL for {resource.get('type')} - {resource_id}")
-                        logger.debug(f"Resource details: {resource}")
+                        logger.debug(f"Resource details before generation: {resource}")
+                        logger.debug(f"Resource details content: {resource.get('details', {})}")
+                        logger.debug(f"Resource type: {type(resource.get('details', {}))}")
                         hcl = generator.generate(resource)
                         if hcl:
                             logger.info(f"Successfully generated HCL for {resource_id}")
@@ -212,13 +230,20 @@ def main():
                 resources_result = auditor.audit_resources(args.tf_dir)
                 target_resources = {}
                 
-                # Process only unmanaged resources
-                for service_resources in resources_result["unmanaged"].values():
-                    for resource in service_resources:
-                        if resource.get("type") == args.type:
-                            resource_id = resource.get("id")
-                            if resource_id:
-                                target_resources[resource_id] = resource
+                # Process resources based on include_managed flag
+                resource_groups = ["unmanaged"]
+                if args.include_managed:
+                    resource_groups.append("managed")
+
+                for group in resource_groups:
+                    for service_resources in resources_result[group].values():
+                        for resource in service_resources:
+                            if resource.get("type") == args.type:
+                                resource_id = resource.get("id")
+                                if resource_id:
+                                    status = "managed" if group == "managed" else "unmanaged"
+                                    logger.info(f"Found {status} {args.type}: {resource_id}")
+                                    target_resources[resource_id] = resource  # Remove unnecessary deepcopy
 
                 # Get generator with module prefix and state reader if specified
                 generator = HCLGeneratorRegistry.get_generator(
@@ -235,7 +260,11 @@ def main():
 
                 # Collect HCL
                 for resource_id, resource in target_resources.items():
-                    hcl = generator.generate(resource)
+                    # Pass include_default_vpc option for VPC resources
+                    if args.type == "aws_vpc":
+                        hcl = generator.generate(resource, include_default=args.include_default_vpc)
+                    else:
+                        hcl = generator.generate(resource)
                     if hcl:
                         all_hcl.append(hcl)
 

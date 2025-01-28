@@ -19,7 +19,6 @@ class ResourceCollector(ABC):
         self._region = None
         self.session = session or boto3.Session()
         self.progress_callback = progress_callback
-        logger.debug(f"Initializing collector: {self.__class__.__name__}")
 
     @abstractmethod
     def get_service_name(self) -> str:
@@ -116,7 +115,6 @@ class CollectorRegistry:
                     if target_type != service_name and target_type not in resource_types:
                         continue
                 instances.append(collector)
-                logger.debug(f"Initialized collector: {collector_cls.__name__}")
             except Exception as e:
                 logger.error(
                     f"Failed to initialize collector {collector_cls.__name__}: {e}"
@@ -142,5 +140,4 @@ registry = CollectorRegistry()
 
 def register_collector(collector_class: type):
     """Decorator to register a collector class"""
-    logger.debug(f"Registering collector class: {collector_class.__name__}")
     return registry.register(collector_class)

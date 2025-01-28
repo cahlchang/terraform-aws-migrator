@@ -69,7 +69,6 @@ class HCLGeneratorRegistry:
         """Register a generator class"""
         resource_type = generator_class.resource_type()
         cls._generators[resource_type] = generator_class
-        logger.debug(f"Registered generator for {resource_type}")
         return generator_class
 
     @classmethod
@@ -123,18 +122,13 @@ class HCLGeneratorRegistry:
         if not cls._initialized:
             cls._initialize()
 
-        logger.info(f"Looking for generators in category: {category}")
-        logger.debug(f"Available generators: {list(cls._generators.keys())}")
-        
         generators = {
             resource_type: generator_class
             for resource_type, generator_class in cls._generators.items()
             if resource_type.startswith(f"aws_{category}_")
         }
-        
-        if generators:
-            logger.info(f"Found {len(generators)} generators for category {category}: {list(generators.keys())}")
-        else:
+
+        if not generators:
             logger.warning(f"No generators found for category: {category}")
         
         return generators
@@ -145,8 +139,6 @@ class HCLGeneratorRegistry:
         if cls._initialized:
             logger.debug("Registry already initialized")
             return
-
-        logger.debug("Starting registry initialization")
 
         # Get the generators directory path
         generators_dir = os.path.dirname(__file__)
@@ -174,14 +166,9 @@ class HCLGeneratorRegistry:
                         if (
                             module_name != "terraform_aws_migrator.generators.base"
                         ):  # Skip base.py
-                            logger.info(f"Attempting to load module: {module_name}")
                             module = importlib.import_module(module_name)
-                            logger.info(f"Successfully loaded module: {module_name}")
-                            # モジュール内のジェネレータークラスを確認
                             for attr_name in dir(module):
                                 attr = getattr(module, attr_name)
-                                if isinstance(attr, type) and issubclass(attr, HCLGenerator) and attr != HCLGenerator:
-                                    logger.info(f"Found generator class in {module_name}: {attr_name}")
                     except Exception as e:
                         logger.error(
                             f"Failed to load generator module {module_name}: {str(e)}"

@@ -1,7 +1,8 @@
 import time
-from typing import Dict, List, Set, Any
+from typing import Dict, List, Set, Any, Optional, Union
 import boto3
 import traceback
+import copy
 from rich.console import Console
 from rich.progress import (
     Progress,
@@ -39,17 +40,17 @@ class CompactTimeColumn(ProgressColumn):
 class AWSResourceAuditor:
     """Main class for detecting unmanaged AWS resources"""
 
-    def __init__(self, exclusion_file: str = None, target_resource_type: str = None):
+    def __init__(self, exclusion_file: Optional[str] = None, target_resource_type: Optional[str] = None):
         self.session = boto3.Session()
         self.state_reader = TerraformStateReader(self.session)
         self.console = Console()
-        self.start_time = None
+        self.start_time: Optional[float] = None
         self.exclusion_config = ResourceExclusionConfig(exclusion_file)
         self.target_resource_type = target_resource_type
-        self.resource_type_mappings = {}
+        self.resource_type_mappings: Dict[str, str] = {}
 
-    def get_terraform_managed_resources(self, tf_dir: str, progress=None) -> Set[str]:
-        """Get set of resource identifiers managed by Terraform"""
+    def get_terraform_managed_resources(self, tf_dir: str, progress=None) -> Dict[str, Dict[str, Any]]:
+        """Get dictionary of resource identifiers managed by Terraform"""
         try:
             managed_resources = self.state_reader.get_managed_resources(
                 tf_dir, progress
@@ -60,9 +61,9 @@ class AWSResourceAuditor:
             return managed_resources
         except Exception as e:
             self.console.print(f"[red]Error reading Terraform state: {str(e)}")
-            return set()
+            return {}
 
-    def _get_relevant_collectors(self):
+    def _get_relevant_collectors(self) -> List[Any]:
         """Get collectors based on target_resource_type"""
         collectors = registry.get_collectors(self.session)
 
@@ -74,7 +75,7 @@ class AWSResourceAuditor:
         for collector in collectors:
             resource_types = collector.get_resource_types()
             service_name = collector.get_service_name()
-            
+
             # apply category filter
             if not self.target_resource_type.startswith("aws_"):
                 if self.target_resource_type == service_name:
@@ -95,12 +96,17 @@ class AWSResourceAuditor:
 
         return matching_collectors
 
-    def audit_resources(self, tf_dir: str) -> Dict[str, List[Dict[str, Any]]]:
+    def audit_resources(self, tf_dir: str) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
         """Detect AWS resources that are not managed by Terraform, optionally filtered by type"""
         self.start_time = time.time()
-        result: Dict[str, List[Dict[str, Any]]] = {"managed": {}, "unmanaged": {}}
+        result: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
+            "managed": {},
+            "unmanaged": {}
+        }
 
         def get_elapsed_time() -> str:
+            if self.start_time is None:
+                return "[00:00]"
             elapsed = int(time.time() - self.start_time)
             minutes = elapsed // 60
             seconds = elapsed % 60
@@ -169,7 +175,7 @@ class AWSResourceAuditor:
                     )
 
                     if unmanaged:
-                        type_groups = {}
+                        type_groups: Dict[str, List[Dict[str, Any]]] = {}
                         for resource in unmanaged:
                             resource_type = resource.get("type", "unknown")
                             if resource_type not in type_groups:
@@ -198,14 +204,60 @@ class AWSResourceAuditor:
             progress.update(aws_task, completed=True)
 
         # Display total execution time
-        total_time = int(time.time() - self.start_time)
-        minutes = total_time // 60
-        seconds = total_time % 60
-        self.console.print(
-            f"\n[green]Total execution time: [{minutes:02d}:{seconds:02d}]"
-        )
+        if self.start_time is not None:
+            total_time = int(time.time() - self.start_time)
+            minutes = total_time // 60
+            seconds = total_time % 60
+            self.console.print(
+                f"\n[green]Total execution time: [{minutes:02d}:{seconds:02d}]"
+            )
 
         return result
+
+    def _matches_target_type(self, resource_type: Optional[str]) -> bool:
+        """Check if resource type matches target type filter"""
+        if not self.target_resource_type:
+            return True
+        
+        if not resource_type:
+            return False
+        
+        if self.target_resource_type.startswith("aws_"):
+            return resource_type == self.target_resource_type
+        
+        return resource_type.startswith(f"aws_{self.target_resource_type}_")
+
+    def _process_s3_resource(
+        self, resource: Dict[str, Any], managed_resources: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Process S3 bucket policy and ACL resources"""
+        resource_type = resource.get("type")
+        bucket_name = resource.get("id")
+        
+        # Check for exact match in managed resources
+        for state_resource in managed_resources.values():
+            if (state_resource.get("type") == resource_type and
+                state_resource.get("id") == bucket_name):
+                return None
+
+            # Check for resource name collision
+            if state_resource.get("type") == resource_type:
+                from terraform_aws_migrator.generators.aws_storage.s3 import S3BucketACLGenerator
+                generator = S3BucketACLGenerator()
+                state_id = state_resource.get("id")
+                if state_id and bucket_name and (
+                    generator._generate_resource_name(state_id) ==
+                    generator._generate_resource_name(bucket_name)
+                ):
+                    return None
+
+        # If not managed and matches target type, return copy of resource
+        if resource_type and self._matches_target_type(resource_type):
+            copied_resource = copy.deepcopy(resource)
+            if not copied_resource.get('details') and resource.get('details'):
+                copied_resource['details'] = copy.deepcopy(resource['details'])
+            return copied_resource
+        return None
 
     def _filter_unmanaged_resources(
         self, resources: List[Dict[str, Any]], managed_resources: Dict[str, Any]
@@ -214,86 +266,41 @@ class AWSResourceAuditor:
         unmanaged = []
         managed_identifiers = set()
 
-        # Create a set of managed resource identifiers
+        # Create set of managed resource identifiers
         for resource in managed_resources.values():
-            resource_type = resource.get("type")
             identifier = resource.get("arn") or resource.get("id")
             if identifier:
                 managed_identifiers.add(identifier)
-                # S3Policy (TODO: Refactor this)
-                if resource_type == "aws_s3_bucket_policy":
-                    bucket_name = identifier
-                    bucket_arn = f"arn:aws:s3:::{bucket_name}"
-                    managed_identifiers.add(bucket_name)
-                    managed_identifiers.add(bucket_arn)
-                    logger.debug(f"Added S3 bucket policy identifiers: {bucket_name}, {bucket_arn}")
+                # Add S3 bucket identifiers
+                if resource.get("type") == "aws_s3_bucket_policy":
+                    managed_identifiers.add(f"arn:aws:s3:::{identifier}")
 
+        # Process resources
         for resource in resources:
+            if self.exclusion_config.should_exclude(resource):
+                continue
+
             resource_type = resource.get("type")
-            identifier = resource.get("arn") or resource.get("id")
             
-            # TODO: Refactor this
+            # Special handling for S3 bucket policy and ACL
             if resource_type in ["aws_s3_bucket_policy", "aws_s3_bucket_acl"]:
-                bucket_name = resource.get("id")
-                bucket_arn = f"arn:aws:s3:::{bucket_name}"
-                logger.info(f"Checking S3 {resource_type}: {bucket_name}")
-                
-                is_managed = False
-                resource_id_in_state = False
-                for state_resource in managed_resources.values():
-                    state_type = state_resource.get("type")
-                    state_id = state_resource.get("id")
-                    
-                    if state_type == resource_type and state_id == bucket_name:
-                        logger.info(f"Found exact match for {resource_type}:{bucket_name} in state")
-                        is_managed = True
-                        break
-                    
-                    if state_type == resource_type:
-                        from terraform_aws_migrator.generators.aws_storage.s3 import S3BucketACLGenerator
-                        generator = S3BucketACLGenerator()
-                        state_resource_name = generator._generate_resource_name(state_id)
-                        current_resource_name = generator._generate_resource_name(bucket_name)
-                        if state_resource_name == current_resource_name:
-                            logger.info(f"Resource name collision detected for {bucket_name}")
-                            resource_id_in_state = True
-                            break
-                
-                if resource_id_in_state:
-                    logger.info(f"Skipping {resource_type} for {bucket_name} due to resource name collision")
-                    continue
-                
-                if not is_managed:
-                    logger.info(f"Found unmanaged {resource_type}: {bucket_name}")
-                    if not self.exclusion_config.should_exclude(resource):
-                        if self.target_resource_type:
-                            if self.target_resource_type.startswith("aws_"):
-                                if resource_type == self.target_resource_type:
-                                    logger.info(f"Adding unmanaged {resource_type}: {bucket_name}")
-                                    unmanaged.append(resource)
-                            else:
-                                if resource_type and resource_type.startswith(f"aws_{self.target_resource_type}_"):
-                                    logger.info(f"Adding unmanaged {resource_type}: {bucket_name}")
-                                    unmanaged.append(resource)
-                        else:
-                            logger.info(f"Adding unmanaged {resource_type}: {bucket_name}")
-                            unmanaged.append(resource)
-                else:
-                    logger.info(f"{resource_type} is managed: {bucket_name}")
-            # common case
-            elif identifier and identifier not in managed_identifiers:
-                if not self.exclusion_config.should_exclude(resource):
-                    if self.target_resource_type:
-                        resource_type = resource.get("type")
-                        if self.target_resource_type.startswith("aws_"):
-                            # complete resource type is specified
-                            if resource_type == self.target_resource_type:
-                                unmanaged.append(resource)
-                        else:
-                            # category is specified
-                            if resource_type and resource_type.startswith(f"aws_{self.target_resource_type}_"):
-                                unmanaged.append(resource)
-                    else:
-                        unmanaged.append(resource)
+                processed = self._process_s3_resource(resource, managed_resources)
+                if processed:
+                    unmanaged.append(processed)
+                continue
+
+            # Common case - check if resource is unmanaged
+            identifier = resource.get("arn") or resource.get("id")
+            if identifier and identifier not in managed_identifiers:
+                if resource_type and self._matches_target_type(resource_type):
+                    # Create a new dictionary with only the required fields
+                    processed_resource = {
+                        'id': resource.get('id', ''),
+                        'type': resource.get('type', ''),
+                        'tags': copy.deepcopy(resource.get('tags', [])),
+                        'arn': resource.get('arn', ''),
+                        'details': copy.deepcopy(resource.get('details', {}))
+                    }
+                    unmanaged.append(processed_resource)
 
         return unmanaged

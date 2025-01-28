@@ -1,7 +1,7 @@
 # terraform_aws_migrator/collectors/aws_networking.py
 
 from typing import Dict, List, Any
-from .base import ResourceCollector, register_collector
+from ..base import ResourceCollector, register_collector
 
 import logging
 import json

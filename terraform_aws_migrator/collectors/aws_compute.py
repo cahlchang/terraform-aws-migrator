@@ -17,7 +17,6 @@ class EC2Collector(ResourceCollector):
     def get_resource_types(self) -> Dict[str, str]:
         return {
             "aws_instance": "EC2 Instances",
-            "aws_vpc": "Virtual Private Clouds",
             "aws_security_group": "Security Groups",
         }
 
@@ -26,9 +25,6 @@ class EC2Collector(ResourceCollector):
         try:
             if not target_resource_type or target_resource_type == "aws_instance":
                 resources.extend(self._collect_ec2_instances())
-
-            if not target_resource_type or target_resource_type == "aws_vpc":
-                resources.extend(self._collect_vpcs())
 
             if not target_resource_type or target_resource_type == "aws_security_group":
                 resources.extend(self._collect_security_groups())
@@ -105,34 +101,6 @@ class EC2Collector(ResourceCollector):
 
         except Exception as e:
             logger.error(f"Error collecting EC2 instances: {str(e)}")
-            return []
-
-    def _collect_vpcs(self) -> List[Dict[str, Any]]:
-        """Collect VPC resources"""
-        resources = []
-        try:
-            for vpc in self.client.describe_vpcs()["Vpcs"]:
-                resources.append(
-                    {
-                        "type": "aws_vpc",
-                        "id": vpc["VpcId"],
-                        "arn": self.build_arn("vpc", vpc["VpcId"]),
-                        "tags": vpc.get("Tags", []),
-                        "details": {
-                            "cidr_block": vpc.get("CidrBlock"),
-                            "instance_tenancy": vpc.get("InstanceTenancy"),
-                            "enable_dns_support": vpc.get("EnableDnsSupport"),
-                            "enable_dns_hostnames": vpc.get("EnableDnsHostnames"),
-                            "is_default": vpc.get("IsDefault", False),
-                        },
-                    }
-                )
-
-            logger.debug(f"Found {len(resources)} VPCs")
-            return resources
-
-        except Exception as e:
-            logger.error(f"Error collecting VPCs: {str(e)}")
             return []
 
     def _collect_security_groups(self) -> List[Dict[str, Any]]:
