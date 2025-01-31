@@ -105,6 +105,13 @@ class VPCGenerator(HCLGenerator):
             if enable_metrics := details.get("enable_network_address_usage_metrics"):
                 hcl.append(f'  enable_network_address_usage_metrics = {str(enable_metrics).lower()}')
 
+            # Add Classic Link settings if present
+            if enable_classiclink := details.get("enable_classiclink"):
+                hcl.append(f'  enable_classiclink = {str(enable_classiclink).lower()}')
+            
+            if enable_classiclink_dns := details.get("enable_classiclink_dns_support"):
+                hcl.append(f'  enable_classiclink_dns_support = {str(enable_classiclink_dns).lower()}')
+
             # Close resource block
             hcl.append("}")
 

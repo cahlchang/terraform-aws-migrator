@@ -32,7 +32,7 @@ class VPCCollector(ResourceCollector):
 
     def _collect_vpcs(self) -> List[Dict[str, Any]]:
         """Collect VPCs"""
-        resources = []
+        resources: List[Dict[str, Any]] = []
         try:
             logger.debug("Initializing EC2 client for VPC collection")
             if not self.client:
@@ -108,7 +108,37 @@ class VPCCollector(ResourceCollector):
                             "enable_network_address_usage_metrics": vpc.get(
                                 "EnableNetworkAddressUsageMetrics", False
                             ),
+                            "enable_classiclink": False,
+                            "enable_classiclink_dns_support": False,
                         }
+
+                        # Get Classic Link status
+                        try:
+                            classic_link_response = self.client.describe_vpc_classic_link(
+                                VpcIds=[vpc["VpcId"]]
+                            )
+                            if classic_link_response["Vpcs"]:
+                                vpc_details["enable_classiclink"] = classic_link_response["Vpcs"][0].get(
+                                    "ClassicLinkEnabled", False
+                                )
+                        except Exception as e:
+                            logger.error(
+                                f"Error getting Classic Link status for VPC {vpc['VpcId']}: {str(e)}"
+                            )
+
+                        # Get Classic Link DNS support status
+                        try:
+                            dns_support_response = self.client.describe_vpc_classic_link_dns_support(
+                                VpcIds=[vpc["VpcId"]]
+                            )
+                            if dns_support_response["Vpcs"]:
+                                vpc_details["enable_classiclink_dns_support"] = dns_support_response["Vpcs"][0].get(
+                                    "ClassicLinkDnsSupported", False
+                                )
+                        except Exception as e:
+                            logger.error(
+                                f"Error getting Classic Link DNS support status for VPC {vpc['VpcId']}: {str(e)}"
+                            )
                         logger.debug(f"Building VPC details for {vpc['VpcId']}")
 
                         # CIDRブロック関連の情報を追加
