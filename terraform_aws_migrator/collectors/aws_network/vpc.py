@@ -114,31 +114,74 @@ class VPCCollector(ResourceCollector):
 
                         # Get Classic Link status
                         try:
-                            classic_link_response = self.client.describe_vpc_classic_link(
-                                VpcIds=[vpc["VpcId"]]
-                            )
-                            if classic_link_response["Vpcs"]:
-                                vpc_details["enable_classiclink"] = classic_link_response["Vpcs"][0].get(
-                                    "ClassicLinkEnabled", False
+                            classic_link_response = (
+                                self.client.describe_vpc_classic_link(
+                                    VpcIds=[vpc["VpcId"]]
                                 )
+                            )
+
+                            if classic_link_response["Vpcs"]:
+                                vpc_details["enable_classiclink"] = (
+                                    classic_link_response["Vpcs"][0].get(
+                                        "ClassicLinkEnabled", False
+                                    )
+                                )
+                                logger.debug(
+                                    f"Classic Link status for VPC {vpc['VpcId']}: "
+                                    f"{vpc_details['enable_classiclink']}"
+                                )
+                        except self.client.exceptions.UnsupportedOperation:
+                            logger.info(
+                                f"Classic Link is not supported in this region for VPC {vpc['VpcId']}"
+                            )
+                            vpc_details["enable_classiclink"] = False
+                        except self.client.exceptions.ClientError as e:
+                            if e.response["Error"]["Code"] == "InvalidVpcID.NotFound":
+                                logger.error(
+                                    f"VPC {vpc['VpcId']} not found when checking Classic Link status"
+                                )
+                            else:
+                                logger.error(
+                                    f"Error getting Classic Link status for VPC {vpc['VpcId']}: {str(e)}"
+                                )
+                            vpc_details["enable_classiclink"] = False
                         except Exception as e:
                             logger.error(
-                                f"Error getting Classic Link status for VPC {vpc['VpcId']}: {str(e)}"
+                                f"Unexpected error getting Classic Link status for VPC {vpc['VpcId']}: {str(e)}"
                             )
+                            vpc_details["enable_classiclink"] = False
 
                         # Get Classic Link DNS support status
                         try:
-                            dns_support_response = self.client.describe_vpc_classic_link_dns_support(
-                                VpcIds=[vpc["VpcId"]]
-                            )
-                            if dns_support_response["Vpcs"]:
-                                vpc_details["enable_classiclink_dns_support"] = dns_support_response["Vpcs"][0].get(
-                                    "ClassicLinkDnsSupported", False
+                            dns_support_response = (
+                                self.client.describe_vpc_classic_link_dns_support(
+                                    VpcIds=[vpc["VpcId"]]
                                 )
+                            )
+
+                            if dns_support_response["Vpcs"]:
+                                vpc_details["enable_classiclink_dns_support"] = (
+                                    dns_support_response["Vpcs"][0].get(
+                                        "ClassicLinkDnsSupported", False
+                                    )
+                                )
+                        except self.client.exceptions.UnsupportedOperation:
+                            vpc_details["enable_classiclink_dns_support"] = False
+                        except self.client.exceptions.ClientError as e:
+                            if e.response["Error"]["Code"] == "InvalidVpcID.NotFound":
+                                logger.error(
+                                    f"VPC {vpc['VpcId']} not found when checking Classic Link DNS support"
+                                )
+                            else:
+                                logger.error(
+                                    f"Error getting Classic Link DNS support status for VPC {vpc['VpcId']}: {str(e)}"
+                                )
+                            vpc_details["enable_classiclink_dns_support"] = False
                         except Exception as e:
                             logger.error(
-                                f"Error getting Classic Link DNS support status for VPC {vpc['VpcId']}: {str(e)}"
+                                f"Unexpected error getting Classic Link DNS support status for VPC {vpc['VpcId']}: {str(e)}"
                             )
+                            vpc_details["enable_classiclink_dns_support"] = False
                         logger.debug(f"Building VPC details for {vpc['VpcId']}")
 
                         # CIDRブロック関連の情報を追加
