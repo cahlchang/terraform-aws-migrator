@@ -53,56 +53,69 @@ class TerraformStateReader:
 
                 resource_type = resource.get("type", "")
                 for instance in resource.get("instances", []):
-                    attributes = instance.get("attributes", {})
+                    try:
+                        attributes = instance.get("attributes", {})
+                        identifier = None
+                        resource_info = None
 
-                    if resource_type == "aws_iam_role_policy_attachment":
-                        role_name = attributes.get("role")
-                        policy_arn = attributes.get("policy_arn")
-                        if role_name and policy_arn:
-                            identifier = f"arn:aws:iam::{self.account_id}:role/{role_name}/{policy_arn}"
-                            managed_resources[identifier] = {
-                                "id": identifier,
-                                "type": resource_type,
-                                "role_name": role_name,
-                                "policy_arn": policy_arn,
-                            }
-                    elif resource_type == "aws_iam_user_policy":
-                        user_name = attributes.get("user")
-                        policy_name = attributes.get("name")
-                        if user_name and policy_name:
-                            identifier = f"{user_name}:{policy_name}"
-                            managed_resources[identifier] = {
-                                "id": attributes.get('id', ''),
-                                "type": resource_type,
-                                "user_name": user_name,
-                            }
-                    elif resource_type == "aws_iam_user_policy_attachment":
-                        user_name = attributes.get("user")
-                        policy_arn = attributes.get("policy_arn")
-                        if user_name and policy_arn:
-                            identifier = f"{user_name}:{policy_arn}"
-                            managed_resources[identifier] = {
-                                "id": identifier,
-                                "type": resource_type,
-                                "user_name": user_name,
-                                "policy_arn": policy_arn,
-                            }
-                    else:
-                        formatted_resource = self._format_resource(
-                            resource_type,
-                            attributes,
-                            instance.get("index_key"),
-                        )
-                        if formatted_resource:
-                            identifier = self._get_identifier_for_managed_set(
-                                formatted_resource
+                        if resource_type == "aws_iam_role_policy_attachment":
+                            role_name = attributes.get("role")
+                            policy_arn = attributes.get("policy_arn")
+                            if role_name and policy_arn:
+                                identifier = f"arn:aws:iam::{self.account_id}:role/{role_name}/{policy_arn}"
+                                resource_info = {
+                                    "id": identifier,
+                                    "type": resource_type,
+                                    "role_name": role_name,
+                                    "policy_arn": policy_arn,
+                                }
+                        elif resource_type == "aws_iam_user_policy":
+                            user_name = attributes.get("user")
+                            policy_name = attributes.get("name")
+                            if user_name and policy_name:
+                                identifier = f"{user_name}:{policy_name}"
+                                resource_info = {
+                                    "id": attributes.get('id', ''),
+                                    "type": resource_type,
+                                    "user_name": user_name,
+                                }
+                        elif resource_type == "aws_iam_user_policy_attachment":
+                            user_name = attributes.get("user")
+                            policy_arn = attributes.get("policy_arn")
+                            if user_name and policy_arn:
+                                identifier = f"{user_name}:{policy_arn}"
+                                resource_info = {
+                                    "id": identifier,
+                                    "type": resource_type,
+                                    "user_name": user_name,
+                                    "policy_arn": policy_arn,
+                                }
+                        else:
+                            formatted_resource = self._format_resource(
+                                resource_type,
+                                attributes,
+                                instance.get("index_key"),
                             )
-                            if identifier:
-                                managed_resources[identifier] = formatted_resource
+                            if formatted_resource:
+                                identifier = self._get_identifier_for_managed_set(
+                                    formatted_resource
+                                )
+                                if identifier:
+                                    resource_info = formatted_resource
+
+                        if identifier and resource_info:
+                            if identifier not in managed_resources:
+                                managed_resources[identifier] = resource_info
+                            else:
+                                logger.debug(f"Skipping duplicate resource: {identifier}")
+
+                    except Exception as e:
+                        logger.error(f"Error processing instance in resource {resource_type}: {str(e)}")
+                        continue
 
         except Exception as e:
             logger.error(f"Error extracting resources from state: {str(e)}")
-            raise
+            logger.debug(traceback.format_exc())
 
     def _get_identifier_for_managed_set(
         self, resource: Dict[str, Any]
@@ -136,7 +149,7 @@ class TerraformStateReader:
             if not resource_id:
                 return None
 
-            formatted = {
+            formatted: Dict[str, Any] = {
                 "id": resource_id,
                 "type": resource_type,
                 "tags": self._extract_tags(attributes),
@@ -153,7 +166,7 @@ class TerraformStateReader:
 
             # Add resource-specific details
             if resource_type == "aws_vpc":
-                formatted["details"].update({
+                formatted["details"] = {
                     "cidr_block": attributes.get("cidr_block"),
                     "instance_tenancy": attributes.get("instance_tenancy", "default"),
                     "enable_dns_support": attributes.get("enable_dns_support", True),
@@ -164,9 +177,9 @@ class TerraformStateReader:
                     "ipv6_association_id": attributes.get("ipv6_association_id"),
                     "dhcp_options_id": attributes.get("dhcp_options_id"),
                     "enable_network_address_usage_metrics": attributes.get("enable_network_address_usage_metrics", False)
-                })
+                }
             elif resource_type == "aws_iam_role":
-                formatted["details"].update({
+                formatted["details"] = {
                     "path": attributes.get("path", "/"),
                     "assume_role_policy": json.loads(
                         attributes.get("assume_role_policy", "{}")
@@ -174,12 +187,12 @@ class TerraformStateReader:
                     "description": attributes.get("description", ""),
                     "max_session_duration": attributes.get("max_session_duration"),
                     "permissions_boundary": attributes.get("permissions_boundary"),
-                })
+                }
             elif resource_type == "aws_iam_role_policy_attachment":
-                formatted["details"].update({
+                formatted["details"] = {
                     "role": attributes.get("role"),
                     "policy_arn": attributes.get("policy_arn"),
-                })
+                }
 
             return formatted
 
@@ -210,33 +223,40 @@ class TerraformStateReader:
         return tags
 
     def _find_s3_backend(self, tf_dir: Path) -> Optional[Dict[str, str]]:
-        """Find S3 backend configuration in main.tf"""
-        main_tf = tf_dir / "main.tf"
-        if not main_tf.exists():
-            return None
-
+        """Find S3 backend configuration in Terraform files"""
         try:
-            with open(main_tf) as f:
-                content = hcl2.load(f)
-                if "terraform" not in content:
-                    return None
+            # Check all .tf files in the directory
+            for tf_file in tf_dir.glob("*.tf"):
+                try:
+                    with open(tf_file) as f:
+                        content = hcl2.load(f)
+                        if "terraform" not in content:
+                            continue
 
-                for terraform_block in content["terraform"]:
-                    if "backend" not in terraform_block:
-                        continue
+                        for terraform_block in content["terraform"]:
+                            if "backend" not in terraform_block:
+                                continue
 
-                    backend = terraform_block["backend"]
-                    if not isinstance(backend, list):
-                        continue
+                            backend = terraform_block["backend"]
+                            if not isinstance(backend, list):
+                                continue
 
-                    for backend_config in backend:
-                        if "s3" in backend_config:
-                            return backend_config["s3"]
-        except Exception as e:
-            self.console.print(f"[yellow]Error reading main.tf: {str(e)}")
+                            for backend_config in backend:
+                                if "s3" in backend_config:
+                                    logger.debug(f"Found S3 backend configuration in {tf_file}")
+                                    return backend_config["s3"]
+
+                except Exception as e:
+                    logger.warning(f"Error reading {tf_file}: {str(e)}")
+                    continue
+
+            logger.debug("No S3 backend configuration found")
             return None
 
-        return None
+        except Exception as e:
+            logger.error(f"Error searching for S3 backend: {str(e)}")
+            logger.debug(traceback.format_exc())
+            return None
 
     def _get_s3_state(
         self, bucket: str, key: str, region: str
@@ -244,23 +264,83 @@ class TerraformStateReader:
         """Read Terraform state file from S3"""
         try:
             s3_client = self.session.client("s3", region_name=region)
+            
+            # Check if object exists
+            try:
+                head = s3_client.head_object(Bucket=bucket, Key=key)
+            except s3_client.exceptions.ClientError as e:
+                if e.response['Error']['Code'] == '404':
+                    logger.warning(f"State file does not exist in S3: s3://{bucket}/{key}")
+                    return None
+                raise
+
+            # Check file size
+            size_mb = head['ContentLength'] / (1024 * 1024)
+            if size_mb > 100:
+                logger.warning(f"S3 state file is very large ({size_mb:.2f}MB): s3://{bucket}/{key}")
+
+            # Get the object
             response = s3_client.get_object(Bucket=bucket, Key=key)
-            return json.loads(response["Body"].read().decode("utf-8"))
+            
+            try:
+                state_data = json.loads(response["Body"].read().decode("utf-8"))
+                if not isinstance(state_data, dict):
+                    logger.warning(f"Invalid state file format (not a dictionary): s3://{bucket}/{key}")
+                    return None
+                
+                # Basic validation of state file structure
+                if "version" not in state_data:
+                    logger.warning(f"State file missing version field: s3://{bucket}/{key}")
+                    return None
+
+                logger.debug(f"Successfully read state file from S3: s3://{bucket}/{key}")
+                return state_data
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in S3 state file s3://{bucket}/{key}: {str(e)}")
+                return None
+
         except Exception as e:
-            self.console.print(
-                f"[red]Error reading state file from S3 {bucket}/{key}: {str(e)}"
-            )
+            logger.error(f"Error reading state file from S3 s3://{bucket}/{key}: {str(e)}")
+            logger.debug(traceback.format_exc())
             return None
 
     def _read_local_state(self, state_file: Path) -> Optional[Dict[str, Any]]:
         """Read a local Terraform state file"""
         try:
+            if not state_file.exists():
+                logger.warning(f"State file does not exist: {state_file}")
+                return None
+
+            if state_file.stat().st_size == 0:
+                logger.warning(f"State file is empty: {state_file}")
+                return None
+
+            # Check if file is too large (> 100MB)
+            if state_file.stat().st_size > 100 * 1024 * 1024:
+                logger.warning(f"State file is very large ({state_file.stat().st_size / 1024 / 1024:.2f}MB): {state_file}")
+
             with open(state_file) as f:
-                return json.load(f)
+                try:
+                    state_data = json.load(f)
+                    if not isinstance(state_data, dict):
+                        logger.warning(f"Invalid state file format (not a dictionary): {state_file}")
+                        return None
+                    
+                    # Basic validation of state file structure
+                    if "version" not in state_data:
+                        logger.warning(f"State file missing version field: {state_file}")
+                        return None
+
+                    logger.debug(f"Successfully read state file: {state_file}")
+                    return state_data
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON in state file {state_file}: {str(e)}")
+                    return None
+
         except Exception as e:
-            self.console.print(
-                f"[yellow]Error reading state file {state_file}: {str(e)}"
-            )
+            logger.error(f"Error reading state file {state_file}: {str(e)}")
+            logger.debug(traceback.format_exc())
             return None
 
     # terraform_aws_migrator/state_reader.py
@@ -291,10 +371,12 @@ class TerraformStateReader:
         """
         managed_resources: Dict[str, Dict[str, Any]] = {}
         tf_dir_path = Path(tf_dir)
+        processed_states = set()  # Track processed state files to avoid duplicates
+
         try:
             # First check S3 backend
             s3_config = self._find_s3_backend(tf_dir_path)
-            if s3_config and progress:
+            if s3_config:
                 state_data = self._get_s3_state(
                     bucket=s3_config["bucket"],
                     key=s3_config["key"],
@@ -303,92 +385,36 @@ class TerraformStateReader:
                 if state_data:
                     try:
                         self._extract_resources_from_state(state_data, managed_resources)
+                        processed_states.add(s3_config["key"])
                     except Exception as e:
                         logger.error(f"Error processing S3 state: {str(e)}")
+                        logger.debug(traceback.format_exc())
 
             # Then check local state files
             state_files = list(Path(tf_dir).rglob("*.tfstate"))
             for state_file in state_files:
+                if str(state_file) in processed_states:
+                    logger.debug(f"Skipping already processed state file: {state_file}")
+                    continue
+
                 state_data = self._read_local_state(state_file)
                 if state_data:
                     try:
                         self._extract_resources_from_state(state_data, managed_resources)
+                        processed_states.add(str(state_file))
                     except Exception as e:
                         logger.error(f"Error processing local state {state_file}: {str(e)}")
+                        logger.debug(traceback.format_exc())
 
+            logger.info(f"Processed {len(processed_states)} state files")
+            logger.info(f"Found {len(managed_resources)} managed resources")
             return managed_resources
 
         except Exception as e:
-            self.console.print(f"[red]Error reading Terraform state: {str(e)}")
+            logger.error(f"Error reading Terraform state: {str(e)}")
+            logger.debug(traceback.format_exc())
             return {}
 
-    def _extract_resources_from_state(
-        self, state_data: Dict[str, Any], managed_resources: Dict[str, Dict[str, Any]]
-    ):
-        """
-        Extract resource information from state data
-
-        Args:
-            state_data: Terraform state data
-            managed_resources: Dictionary to store managed resource information
-        """
-        try:
-            if "resources" not in state_data:
-                return
-
-            for resource in state_data["resources"]:
-                if resource.get("mode") == "data":
-                    continue
-
-                resource_type = resource.get("type", "")
-                for instance in resource.get("instances", []):
-                    attributes = instance.get("attributes", {})
-
-                    if resource_type == "aws_iam_role_policy_attachment":
-                        role_name = attributes.get("role")
-                        policy_arn = attributes.get("policy_arn")
-                        if role_name and policy_arn:
-                            identifier = f"arn:aws:iam::{self.account_id}:role/{role_name}/{policy_arn}"
-                            managed_resources[identifier] = {
-                                "id": identifier,
-                                "type": resource_type,
-                                "role_name": role_name,
-                                "policy_arn": policy_arn,
-                            }
-                    elif resource_type == "aws_iam_user_policy":
-                        user_name = attributes.get("user")
-                        policy_name = attributes.get("name")
-                        identifier = f"{user_name}:{policy_name}"
-                        managed_resources[identifier] = {
-                            "id": attributes['id'],
-                            "type": resource_type,
-                            "user_name": user_name,
-                        }
-                    elif resource_type == "aws_iam_user_policy_attachment":
-                        user_name = attributes.get("user")
-                        policy_arn = attributes.get("policy_arn")
-                        identifier = f"{user_name}:{policy_arn}"
-                        managed_resources[identifier] = {
-                            "id": identifier,
-                            "type": resource_type,
-                            "user_name": user_name,
-                            "policy_arn": policy_arn,
-                        }
-                    else:
-                        formatted_resource = self._format_resource(
-                            resource_type,
-                            attributes,
-                            instance.get("index_key"),
-                        )
-                        if formatted_resource:
-                            identifier = self._get_identifier_for_managed_set(
-                                formatted_resource
-                            )
-                            if identifier:
-                                managed_resources[identifier] = formatted_resource
-
-        except Exception as e:
-            raise e
 
     def get_s3_state_file(
         self, bucket: str, key: str, region: str, progress=None

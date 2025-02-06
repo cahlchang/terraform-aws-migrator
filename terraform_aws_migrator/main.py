@@ -16,15 +16,28 @@ logger = logging.getLogger(__name__)
 
 def setup_logging(debug: bool = False):
     """Configure logging settings"""
-    # Always suppress boto3/botocore logs unless in debug mode
+    level = logging.DEBUG if debug else logging.WARNING
+
+    # Configure basic logging format and root logger level
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        force=True
+    )
+
+    # Always suppress boto3/botocore logs
     logging.getLogger("boto3").setLevel(logging.WARNING)
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    # Set root logger to debug level if requested
-    level = logging.DEBUG if debug else logging.WARNING
-    logging.getLogger().setLevel(level)
-    logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    # Ensure terraform_aws_migrator logger and its children are set to the correct level
+    app_logger = logging.getLogger("terraform_aws_migrator")
+    app_logger.setLevel(level)
+    
+    # Propagate the level to all child loggers
+    for name in logging.root.manager.loggerDict:
+        if name.startswith("terraform_aws_migrator"):
+            logging.getLogger(name).setLevel(level)
 
 
 class ResourceProcessor:
@@ -251,7 +264,15 @@ def handle_detection(args: argparse.Namespace, console: Console) -> int:
         exclusion_file=args.ignore_file, target_resource_type=args.type
     )
     resources_result = auditor.audit_resources(args.tf_dir)
-    formatted_output = format_output(resources_result["unmanaged"], args.output)
+    
+    # Filter unmanaged resources from all_resources
+    unmanaged_resources = {}
+    for service_name, resources in resources_result.get("all_resources", {}).items():
+        unmanaged = [r for r in resources if not r.get("managed", False)]
+        if unmanaged:
+            unmanaged_resources[service_name] = unmanaged
+    
+    formatted_output = format_output(unmanaged_resources, args.output)
 
     if args.output_file:
         with open(args.output_file, "w") as f:

@@ -135,39 +135,7 @@ class AWSResourceAuditor:
             managed_resources = self.get_terraform_managed_resources(tf_dir, progress)
             progress.update(tf_task, completed=True)
 
-            # Group managed resources by service and collect details
-            collectors = self._get_relevant_collectors()
-            for resource in managed_resources.values():
-                service_name = (
-                    resource.get("type", "").split("_")[1]
-                    if resource.get("type", "").startswith("aws_")
-                    else "other"
-                )
-
-                # Collect details for managed resources
-                for collector in collectors:
-                    if collector.get_service_name() == service_name:
-                        try:
-                            collected = collector.collect(
-                                target_resource_type=resource.get("type")
-                            )
-                            for c in collected:
-                                if c.get("id") == resource.get("id"):
-                                    resource["details"] = c.get("details", {})
-                                    break
-                        except Exception as e:
-                            logger.error(
-                                f"Error collecting details for managed resource {resource.get('id')}: {str(e)}"
-                            )
-
-                # Add managed flag
-                resource["managed"] = True
-
-                if service_name not in result["all_resources"]:
-                    result["all_resources"][service_name] = []
-                result["all_resources"][service_name].append(resource)
-
-            # Initialize collectors
+            # Initialize collectors once
             collectors = self._get_relevant_collectors()
             if not collectors:
                 if self.target_resource_type:

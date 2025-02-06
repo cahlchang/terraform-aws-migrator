@@ -34,31 +34,23 @@ class VPCCollector(ResourceCollector):
         """Collect VPCs"""
         resources: List[Dict[str, Any]] = []
         try:
-            logger.debug("Initializing EC2 client for VPC collection")
             if not self.client:
                 logger.error("Failed to initialize EC2 client")
                 return resources
 
-            logger.debug("Creating paginator for describe_vpcs")
             paginator = self.client.get_paginator("describe_vpcs")
             for page in paginator.paginate():
-                logger.debug(f"Processing VPC page: {page}")
                 for vpc in page["Vpcs"]:
-                    logger.debug(f"Processing VPC: {vpc}")
                     # Get VPC attributes
                     vpc_attributes = {
-                        "enable_dns_support": True,  # デフォルト値
-                        "enable_dns_hostnames": False,  # デフォルト値
+                        "enable_dns_support": True,
+                        "enable_dns_hostnames": False,
                     }
 
                     try:
-                        logger.debug(
-                            f"Getting DNS support attribute for VPC {vpc['VpcId']}"
-                        )
                         dns_support = self.client.describe_vpc_attribute(
                             VpcId=vpc["VpcId"], Attribute="enableDnsSupport"
                         )
-                        logger.debug(f"DNS support response: {dns_support}")
                         vpc_attributes["enable_dns_support"] = dns_support[
                             "EnableDnsSupport"
                         ]["Value"]
@@ -71,13 +63,9 @@ class VPCCollector(ResourceCollector):
                         )
 
                     try:
-                        logger.debug(
-                            f"Getting DNS hostnames attribute for VPC {vpc['VpcId']}"
-                        )
                         dns_hostnames = self.client.describe_vpc_attribute(
                             VpcId=vpc["VpcId"], Attribute="enableDnsHostnames"
                         )
-                        logger.debug(f"DNS hostnames response: {dns_hostnames}")
                         vpc_attributes["enable_dns_hostnames"] = dns_hostnames[
                             "EnableDnsHostnames"
                         ]["Value"]
@@ -125,10 +113,6 @@ class VPCCollector(ResourceCollector):
                                     classic_link_response["Vpcs"][0].get(
                                         "ClassicLinkEnabled", False
                                     )
-                                )
-                                logger.debug(
-                                    f"Classic Link status for VPC {vpc['VpcId']}: "
-                                    f"{vpc_details['enable_classiclink']}"
                                 )
                         except self.client.exceptions.UnsupportedOperation:
                             logger.info(
@@ -184,7 +168,6 @@ class VPCCollector(ResourceCollector):
                             vpc_details["enable_classiclink_dns_support"] = False
                         logger.debug(f"Building VPC details for {vpc['VpcId']}")
 
-                        # CIDRブロック関連の情報を追加
                         cidr_associations = []
                         for assoc in vpc.get("CidrBlockAssociationSet", []):
                             try:
@@ -203,7 +186,7 @@ class VPCCollector(ResourceCollector):
                         vpc_details["cidr_block_associations"] = cidr_associations
                         logger.debug(f"Processed CIDR blocks for VPC {vpc['VpcId']}")
 
-                        # IPv6関連の情報を追加
+                        # IPv6
                         try:
                             ipv6_associations = vpc.get(
                                 "Ipv6CidrBlockAssociationSet", []
@@ -249,10 +232,10 @@ class VPCCollector(ResourceCollector):
                             "arn": f"arn:aws:ec2:{self.region}:{self.account_id}:vpc/{vpc['VpcId']}",
                             "tags": copy.deepcopy(
                                 vpc.get("Tags", [])
-                            ),  # Create a deep copy of tags list
+                            ),
                             "details": copy.deepcopy(
                                 vpc_details
-                            ),  # Create a deep copy of details dictionary
+                            ),
                         }
 
                         logger.debug(
