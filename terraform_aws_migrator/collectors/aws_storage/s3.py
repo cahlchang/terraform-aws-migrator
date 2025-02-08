@@ -79,17 +79,17 @@ class S3Collector(ResourceCollector):
                     policy_text = policy.get('Policy')
                     if policy_text:
                         try:
-                            # ポリシーが有効なJSONであることを確認
+                            # Verify that the policy is valid JSON
                             import json
                             json.loads(policy_text)
                             logger.info(f"Found valid bucket policy for {bucket_name}")
                             logger.debug(f"Policy content: {policy_text}")
                             
-                            # ポリシーが存在し、有効なJSONの場合のみ追加
+                            # Add only if policy exists and is valid JSON
                             resources.append({
                                 "type": "aws_s3_bucket_policy",
                                 "id": bucket_name,
-                                "arn": f"arn:aws:s3:::{bucket_name}",  # ARNを追加
+                                "arn": f"arn:aws:s3:::{bucket_name}",  # Add ARN
                                 "details": {
                                     "policy": policy_text
                                 }
@@ -155,7 +155,7 @@ class S3Collector(ResourceCollector):
                 except:  # noqa: E722
                     public_access_block = {}
 
-                # メインのバケットリソース
+                # Main bucket resource
                 resources.append({
                     "type": "aws_s3_bucket",
                     "id": bucket_name,
@@ -163,7 +163,7 @@ class S3Collector(ResourceCollector):
                     "tags": tags
                 })
 
-                # バージョニング設定
+                # Versioning configuration
                 if versioning_status:
                     resources.append({
                         "type": "aws_s3_bucket_versioning",
@@ -173,7 +173,7 @@ class S3Collector(ResourceCollector):
                         }
                     })
 
-                # 暗号化設定
+                # Encryption configuration
                 if encryption_details:
                     resources.append({
                         "type": "aws_s3_bucket_server_side_encryption_configuration",
@@ -181,7 +181,7 @@ class S3Collector(ResourceCollector):
                         "details": encryption_details
                     })
 
-                # パブリックアクセスブロック設定
+                # Public access block configuration
                 if public_access_block:
                     resources.append({
                         "type": "aws_s3_bucket_public_access_block",
@@ -189,7 +189,7 @@ class S3Collector(ResourceCollector):
                         "details": public_access_block
                     })
 
-                # ACL設定
+                # ACL configuration
                 if acl_details and isinstance(acl_details, dict):
                     owner = acl_details.get("owner", {})
                     grants = acl_details.get("grants", [])
@@ -202,9 +202,9 @@ class S3Collector(ResourceCollector):
                         })
                         logger.debug(f"ACL details for {bucket_name}: {acl_details}")
 
-                # バケットポリシーの追加処理は上部で実施済み
+                # Bucket policy has already been added above
 
-                # CORS設定
+                # CORS configuration
                 if cors_rules:
                     resources.append({
                         "type": "aws_s3_bucket_cors_configuration",
@@ -214,7 +214,7 @@ class S3Collector(ResourceCollector):
                         }
                     })
 
-                # Webサイト設定
+                # Website configuration
                 if website_config.get("index_document") or website_config.get("error_document"):
                     resources.append({
                         "type": "aws_s3_bucket_website_configuration",
@@ -222,7 +222,7 @@ class S3Collector(ResourceCollector):
                         "details": website_config
                     })
 
-                # ロギング設定
+                # Logging configuration
                 if logging_details:
                     resources.append({
                         "type": "aws_s3_bucket_logging",

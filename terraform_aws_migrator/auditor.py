@@ -109,6 +109,7 @@ class AWSResourceAuditor:
         self.start_time = time.time()
         result: Dict[str, Dict[str, List[Dict[str, Any]]]] = {"all_resources": {}}
         managed_resources = {}
+        processed_identifiers = set()
 
         def get_elapsed_time() -> str:
             if self.start_time is None:
@@ -164,42 +165,178 @@ class AWSResourceAuditor:
                         target_resource_type=self.target_resource_type
                     )
 
-                    # Create managed resources lookup
-                    managed_lookup = {
-                        (resource.get("type"), resource.get("id")): resource
-                        for resource in managed_resources.values()
-                    }
+                    # Create managed resources lookup using standardized identifiers
+                    managed_lookup: Dict[str, Dict[str, Any]] = {}
+                    for managed_resource in managed_resources.values():
+                        # Get resource type (remove module name)
+                        resource_type = managed_resource.get("type", "")
+                        if "." in resource_type:
+                            resource_type = resource_type.split(".")[-1]
+                        logger.debug(
+                            f"Processing managed resource type: {resource_type} for service: {service_name}"
+                        )
+
+                        # Check service name and resource type association
+                        resource_service = collector.get_service_for_resource_type(
+                            resource_type
+                        )
+
+                        # If service name is unknown, infer from resource type
+                        if not resource_service and resource_type.startswith("aws_"):
+                            inferred_service = resource_type[4:].split("_")[0]
+                            if inferred_service in [
+                                "iam",
+                                "s3",
+                                "ec2",
+                                "lambda",
+                                "rds",
+                                "dynamodb",
+                            ]:
+                                resource_service = inferred_service
+
+                        # Skip if service name doesn't match
+                        if resource_service and resource_service != service_name:
+                            logger.debug(
+                                f"Resource type {resource_type} belongs to service {resource_service}, not {service_name}"
+                            )
+                            continue
+
+                        logger.debug(
+                            f"Resource type {resource_type} matches service {service_name}"
+                        )
+
+                        # Use resource type without module name
+                        base_type = (
+                            resource_type.split(".")[-1]
+                            if "." in resource_type
+                            else resource_type
+                        )
+
+                        # Generate identifiers (multiple formats)
+                        identifiers = []
+
+                        # ARN-based identifier
+                        if "arn" in managed_resource:
+                            identifiers.append(managed_resource["arn"])
+
+                        # Resource type and ID based identifier
+                        if base_type and "id" in managed_resource:
+                            identifiers.append(f"{base_type}:{managed_resource['id']}")
+
+                        # Name-based identifier (from tags)
+                        if "tags" in managed_resource:
+                            tags = managed_resource["tags"]
+                            if isinstance(tags, list):
+                                for tag in tags:
+                                    if (
+                                        isinstance(tag, dict)
+                                        and tag.get("Key") == "Name"
+                                    ):
+                                        identifiers.append(
+                                            f"{base_type}:{tag['Value']}"
+                                        )
+                                        break
+                            elif isinstance(tags, dict) and "Name" in tags:
+                                identifiers.append(f"{base_type}:{tags['Name']}")
+
+                        # Custom identifier
+                        managed_copy = managed_resource.copy()
+                        managed_copy["type"] = base_type
+                        custom_identifier = collector.generate_resource_identifier(
+                            managed_copy
+                        )
+                        if custom_identifier:
+                            identifiers.append(custom_identifier)
+
+                        # Remove duplicates and add as managed resource
+                        if identifiers:
+                            managed_copy = copy.deepcopy(managed_resource)
+                            managed_copy["managed"] = True
+                            for identifier in set(identifiers):
+                                managed_lookup[identifier] = managed_copy
+                                logger.debug(
+                                    f"Added managed resource to lookup: {identifier} (type: {resource_type})"
+                                )
 
                     # Process collected resources
                     processed_resources = []
                     for resource in resources:
-                        # Skip excluded resources
-                        if self.exclusion_config.should_exclude(resource):
-                            continue
-
                         resource_type = resource.get("type")
                         if not resource_type or not self._matches_target_type(
                             resource_type
                         ):
                             continue
 
-                        # Check if resource is managed
-                        resource_id = resource.get("id")
-                        managed_resource = managed_lookup.get(
-                            (resource_type, resource_id)
+                        # Generate standard identifier for comparison
+                        resource_identifier = collector.generate_resource_identifier(
+                            resource
                         )
 
-                        if managed_resource:
+                        if not resource_identifier:
+                            logger.warning(
+                                f"Could not generate identifier for resource: {resource}"
+                            )
+                            continue
+
+                        # check for duplicate resources
+                        if resource_identifier in processed_identifiers:
+                            logger.debug(
+                                f"Skipping duplicate resource: {resource_identifier}"
+                            )
+                            continue
+
+                        # Skip excluded resources
+                        if self.exclusion_config.should_exclude(resource):
+                            logger.debug(f"Excluding resource: {resource_identifier}")
+                            continue
+
+                        # Check resource management status
+                        found_managed_resource: Optional[Dict[str, Any]] = None
+
+                        # Check different identifiers in sequence
+                        identifiers_to_check = [resource_identifier]
+                        if "arn" in resource:
+                            identifiers_to_check.append(resource["arn"])
+                        if resource_type and "id" in resource:
+                            identifiers_to_check.append(
+                                f"{resource_type}:{resource['id']}"
+                            )
+
+                        # Check each identifier
+                        for identifier in identifiers_to_check:
+                            if identifier in managed_lookup:
+                                found_managed_resource = managed_lookup[identifier]
+                                logger.debug(
+                                    f"Found managed resource with identifier: {identifier}"
+                                )
+                                break
+                            logger.debug(
+                                f"No managed resource found for identifier: {identifier}"
+                            )
+
+                        # Create resource copy
+                        resource_copy = copy.deepcopy(resource)
+                        resource_copy["identifier"] = resource_identifier
+                        if found_managed_resource is not None:
                             # Use managed resource but keep details from collector
-                            managed_copy = copy.deepcopy(managed_resource)
-                            managed_copy["details"] = resource.get("details", {})
-                            managed_copy["managed"] = True
-                            processed_resources.append(managed_copy)
+                            resource_copy.update(found_managed_resource)
+                            resource_copy["details"] = resource.get("details", {})
+                            resource_copy["managed"] = True
+                            logger.debug(
+                                f"Resource {resource_identifier} marked as managed"
+                            )
                         else:
-                            # Use collected resource
-                            resource_copy = copy.deepcopy(resource)
                             resource_copy["managed"] = False
-                            processed_resources.append(resource_copy)
+                            logger.debug(
+                                f"Resource {resource_identifier} marked as unmanaged"
+                            )
+
+                        processed_resources.append(resource_copy)
+                        processed_identifiers.add(resource_identifier)
+
+                        logger.debug(
+                            f"Processed resource {resource_identifier} (managed: {bool(found_managed_resource)})"
+                        )
 
                     if processed_resources:
                         type_groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -217,9 +354,10 @@ class AWSResourceAuditor:
                                 1 for r in resources_list if r.get("managed", False)
                             )
                             unmanaged_count = len(resources_list) - managed_count
-                            self.console.print(
-                                f"[green]Found {len(resources_list)} {display_name} ({managed_count} managed, {unmanaged_count} unmanaged) {get_elapsed_time()}"
-                            )
+                            if unmanaged_count > 0:
+                                self.console.print(
+                                    f"[green]Found {unmanaged_count} unmanaged {display_name} {get_elapsed_time()}"
+                                )
 
                         # Add to result['all_resources']
                         if service_name not in result["all_resources"]:
@@ -259,47 +397,6 @@ class AWSResourceAuditor:
             return resource_type == self.target_resource_type
 
         return resource_type.startswith(f"aws_{self.target_resource_type}_")
-
-    def _process_s3_resource(
-        self, resource: Dict[str, Any], managed_resources: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Process S3 bucket policy and ACL resources"""
-        resource_type = resource.get("type")
-        bucket_name = resource.get("id")
-
-        # Check for exact match in managed resources
-        for state_resource in managed_resources.values():
-            if (
-                state_resource.get("type") == resource_type
-                and state_resource.get("id") == bucket_name
-            ):
-                return None
-
-            # Check for resource name collision
-            if state_resource.get("type") == resource_type:
-                from terraform_aws_migrator.generators.aws_storage.s3 import (
-                    S3BucketACLGenerator,
-                )
-
-                generator = S3BucketACLGenerator()
-                state_id = state_resource.get("id")
-                if (
-                    state_id
-                    and bucket_name
-                    and (
-                        generator._generate_resource_name(state_id)
-                        == generator._generate_resource_name(bucket_name)
-                    )
-                ):
-                    return None
-
-        # If not managed and matches target type, return copy of resource
-        if resource_type and self._matches_target_type(resource_type):
-            copied_resource = copy.deepcopy(resource)
-            if not copied_resource.get("details") and resource.get("details"):
-                copied_resource["details"] = copy.deepcopy(resource["details"])
-            return copied_resource
-        return None
 
     def _process_s3_resource(
         self, resource: Dict[str, Any], managed_resources: Dict[str, Any]

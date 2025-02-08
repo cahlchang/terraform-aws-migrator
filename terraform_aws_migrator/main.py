@@ -171,7 +171,7 @@ class HCLGenerator:
             logger.debug(f"Generating HCL for {resource_type} {resource_id}")
             logger.debug(f"Resource details: {resource.get('details', {})}")
 
-            # VPCリソースの場合のみinclude_defaultパラメータを渡す
+            # Pass include_default parameter only for VPC resources
             if resource_type == "aws_vpc":
                 hcl = generator.generate(resource, include_default=include_default_vpc)
             else:
@@ -265,14 +265,8 @@ def handle_detection(args: argparse.Namespace, console: Console) -> int:
     )
     resources_result = auditor.audit_resources(args.tf_dir)
     
-    # Filter unmanaged resources from all_resources
-    unmanaged_resources = {}
-    for service_name, resources in resources_result.get("all_resources", {}).items():
-        unmanaged = [r for r in resources if not r.get("managed", False)]
-        if unmanaged:
-            unmanaged_resources[service_name] = unmanaged
-    
-    formatted_output = format_output(unmanaged_resources, args.output)
+    # Pass all resources to format_output
+    formatted_output = format_output(resources_result.get("all_resources", {}), args.output)
 
     if args.output_file:
         with open(args.output_file, "w") as f:

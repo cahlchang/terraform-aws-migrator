@@ -48,16 +48,19 @@ class TerraformStateReader:
                 return
 
             for resource in state_data["resources"]:
-                if resource.get("mode") == "data":
+                # Skip data sources and non-managed mode resources
+                if resource.get("mode") != "managed":
                     continue
-
+                
+                # Check if resource is part of a module
+                module_path = resource.get("module", "")
                 resource_type = resource.get("type", "")
                 for instance in resource.get("instances", []):
                     try:
                         attributes = instance.get("attributes", {})
                         identifier = None
                         resource_info = None
-
+            
                         if resource_type == "aws_iam_role_policy_attachment":
                             role_name = attributes.get("role")
                             policy_arn = attributes.get("policy_arn")
@@ -68,6 +71,7 @@ class TerraformStateReader:
                                     "type": resource_type,
                                     "role_name": role_name,
                                     "policy_arn": policy_arn,
+                                    "managed": True
                                 }
                         elif resource_type == "aws_iam_user_policy":
                             user_name = attributes.get("user")
@@ -78,6 +82,7 @@ class TerraformStateReader:
                                     "id": attributes.get('id', ''),
                                     "type": resource_type,
                                     "user_name": user_name,
+                                    "managed": True
                                 }
                         elif resource_type == "aws_iam_user_policy_attachment":
                             user_name = attributes.get("user")
@@ -89,6 +94,7 @@ class TerraformStateReader:
                                     "type": resource_type,
                                     "user_name": user_name,
                                     "policy_arn": policy_arn,
+                                    "managed": True
                                 }
                         else:
                             formatted_resource = self._format_resource(
@@ -102,6 +108,7 @@ class TerraformStateReader:
                                 )
                                 if identifier:
                                     resource_info = formatted_resource
+                                    resource_info["managed"] = True
 
                         if identifier and resource_info:
                             if identifier not in managed_resources:
@@ -127,18 +134,36 @@ class TerraformStateReader:
         Returns:
             String identifier for the managed_resources set
         """
-        # Return ARN if available
+        # Use ARN if available
         if "arn" in resource:
             return resource["arn"]
 
-        # If no ARN, construct identifier from type and id
         resource_type = resource.get("type")
         resource_id = resource.get("id")
 
+        # Special handling for IAM resources
+        if resource_type and resource_type.startswith("aws_iam_"):
+            if resource_type == "aws_iam_role_policy_attachment":
+                role_name = resource.get("role")
+                policy_arn = resource.get("policy_arn")
+                if role_name and policy_arn:
+                    return f"arn:aws:iam::{self.account_id}:role/{role_name}/{policy_arn}"
+            elif resource_type == "aws_iam_user_policy":
+                user_name = resource.get("user")
+                policy_name = resource.get("name")
+                if user_name and policy_name:
+                    return f"{user_name}:{policy_name}"
+            elif resource_type == "aws_iam_user_policy_attachment":
+                user_name = resource.get("user")
+                policy_arn = resource.get("policy_arn")
+                if user_name and policy_arn:
+                    return f"{user_name}:{policy_arn}"
+
+        # Basic identifier generation
         if resource_type and resource_id:
             return f"{resource_type}:{resource_id}"
 
-        return resource.get("id")  # Fallback to just ID if nothing else available
+        return resource.get("id")
 
     def _format_resource(
         self, resource_type: str, attributes: Dict[str, Any], index_key: Any = None
@@ -178,6 +203,19 @@ class TerraformStateReader:
                     "dhcp_options_id": attributes.get("dhcp_options_id"),
                     "enable_network_address_usage_metrics": attributes.get("enable_network_address_usage_metrics", False)
                 }
+            elif resource_type == "aws_subnet":
+                formatted["details"] = {
+                    "vpc_id": attributes.get("vpc_id"),
+                    "cidr_block": attributes.get("cidr_block"),
+                    "availability_zone": attributes.get("availability_zone"),
+                    "map_public_ip_on_launch": attributes.get("map_public_ip_on_launch", False),
+                    "assign_ipv6_address_on_creation": attributes.get("assign_ipv6_address_on_creation", False),
+                    "ipv6_cidr_block": attributes.get("ipv6_cidr_block"),
+                    "enable_dns64": attributes.get("enable_dns64", False),
+                    "enable_resource_name_dns_aaaa_record_on_launch": attributes.get("enable_resource_name_dns_aaaa_record_on_launch", False),
+                    "enable_resource_name_dns_a_record_on_launch": attributes.get("enable_resource_name_dns_a_record_on_launch", False),
+                    "private_dns_hostname_type_on_launch": attributes.get("private_dns_hostname_type_on_launch", "ip-name")
+                }
             elif resource_type == "aws_iam_role":
                 formatted["details"] = {
                     "path": attributes.get("path", "/"),
@@ -193,6 +231,11 @@ class TerraformStateReader:
                     "role": attributes.get("role"),
                     "policy_arn": attributes.get("policy_arn"),
                 }
+
+            # Add all attributes to details (don't overwrite existing values)
+            for key, value in attributes.items():
+                if key not in ["id", "arn", "tags"] and key not in formatted["details"]:
+                    formatted["details"][key] = value
 
             return formatted
 
@@ -275,7 +318,8 @@ class TerraformStateReader:
                 raise
 
             # Check file size
-            size_mb = head['ContentLength'] / (1024 * 1024)
+            content_length = int(head['ContentLength'])
+            size_mb = content_length / (1024 * 1024)
             if size_mb > 100:
                 logger.warning(f"S3 state file is very large ({size_mb:.2f}MB): s3://{bucket}/{key}")
 
@@ -283,7 +327,20 @@ class TerraformStateReader:
             response = s3_client.get_object(Bucket=bucket, Key=key)
             
             try:
-                state_data = json.loads(response["Body"].read().decode("utf-8"))
+                # S3のレスポンスボディを取得
+                body = response["Body"]
+                # readメソッドを呼び出してデータを取得
+                content = body.read()
+                # バイト列の場合はデコード
+                if isinstance(content, (bytes, bytearray)):
+                    content = content.decode("utf-8")
+                elif isinstance(content, str):
+                    pass
+                else:
+                    # その他の場合（モックなど）は文字列として扱う
+                    content = str(content)
+                # JSONとしてパース
+                state_data = json.loads(content)
                 if not isinstance(state_data, dict):
                     logger.warning(f"Invalid state file format (not a dictionary): s3://{bucket}/{key}")
                     return None
@@ -364,7 +421,8 @@ class TerraformStateReader:
                     "type": "aws_iam_role",
                     "arn": "arn:aws:iam::...",
                     "tags": [...],
-                    "details": {...}
+                    "details": {...},
+                    "managed": True
                 },
                 ...
             }
@@ -415,10 +473,8 @@ class TerraformStateReader:
             logger.debug(traceback.format_exc())
             return {}
 
-
     def get_s3_state_file(
         self, bucket: str, key: str, region: str, progress=None
     ) -> Dict[str, Any]:
         """Read Terraform state file from S3 (for backward compatibility)"""
         return self._get_s3_state(bucket, key, region) or {}
-

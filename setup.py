@@ -9,7 +9,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 setup(
     name="terraform-aws-migrator",
     version="0.1.0",
-    packages=find_packages(include=['terraform_aws_migrator', 'terraform_aws_migrator.*']),
+    packages=find_packages(),
     include_package_data=True,
     package_data={
         'terraform_aws_migrator': ['*', '**/*'],
@@ -23,7 +23,7 @@ setup(
     author="morin_river",
     author_email="kahlua.dane@gmail.com",
     description="A tool to migrate unmanaged AWS resources to Terraform",
-    long_description=open("README.md").read(),
+    long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/cahlchang/terraform-aws-migrator",
     classifiers=[

@@ -503,8 +503,30 @@ class VPCNetworkComponentsCollector(ResourceCollector):
             paginator = self.client.get_paginator("describe_vpc_endpoints")
             for page in paginator.paginate():
                 for endpoint in page["VpcEndpoints"]:
-                    resources.append(
-                        {
+                    try:
+                        # Check for required fields
+                        if not all(k in endpoint for k in ["VpcEndpointId", "VpcId", "ServiceName"]):
+                            logger.warning(f"Skipping VPC endpoint due to missing required fields: {endpoint.get('VpcEndpointId', 'unknown')}")
+                            continue
+
+                        # Normalize policy document
+                        policy_doc = endpoint.get("PolicyDocument", "{}")
+                        if isinstance(policy_doc, str):
+                            try:
+                                import json
+                                policy_doc = json.dumps(json.loads(policy_doc), sort_keys=True)
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Invalid policy document for VPC endpoint {endpoint['VpcEndpointId']}: {str(e)}")
+                                policy_doc = "{}"
+
+                        # Get Name tag
+                        name_tag = None
+                        for tag in endpoint.get("Tags", []):
+                            if isinstance(tag, dict) and tag.get("Key") == "Name":
+                                name_tag = tag.get("Value")
+                                break
+
+                        resource = {
                             "type": "aws_vpc_endpoint",
                             "id": endpoint["VpcEndpointId"],
                             "arn": endpoint.get("VpcEndpointArn", ""),
@@ -512,21 +534,28 @@ class VPCNetworkComponentsCollector(ResourceCollector):
                             "details": {
                                 "vpc_id": endpoint["VpcId"],
                                 "service_name": endpoint["ServiceName"],
-                                "state": endpoint["State"],
-                                "vpc_endpoint_type": endpoint["VpcEndpointType"],
+                                "state": endpoint.get("State", "available"),
+                                "vpc_endpoint_type": endpoint.get("VpcEndpointType", "Gateway"),
                                 "subnet_ids": endpoint.get("SubnetIds", []),
                                 "route_table_ids": endpoint.get("RouteTableIds", []),
-                                "private_dns_enabled": endpoint.get(
-                                    "PrivateDnsEnabled", False
-                                ),
-                                "network_interface_ids": endpoint.get(
-                                    "NetworkInterfaceIds", []
-                                ),
+                                "private_dns_enabled": endpoint.get("PrivateDnsEnabled", False),
+                                "network_interface_ids": endpoint.get("NetworkInterfaceIds", []),
                                 "dns_entries": endpoint.get("DnsEntries", []),
-                                "policy": endpoint.get("PolicyDocument", ""),
+                                "policy": policy_doc,
+                                "name": name_tag,
                             },
                         }
-                    )
+
+                        # Verify required fields for identifier generation
+                        if not resource["details"]["vpc_id"] or not resource["details"]["service_name"]:
+                            logger.warning(f"Missing required fields for VPC endpoint identifier: {endpoint['VpcEndpointId']}")
+                            continue
+
+                        resources.append(resource)
+                        logger.debug(f"Successfully processed VPC endpoint: {endpoint['VpcEndpointId']}")
+                    except Exception as e:
+                        logger.error(f"Error processing VPC endpoint {endpoint.get('VpcEndpointId', 'unknown')}: {str(e)}")
+                        continue
         except Exception as e:
             logger.error(f"Error collecting VPC endpoints: {str(e)}")
         return resources
@@ -625,3 +654,45 @@ class VPCNetworkComponentsCollector(ResourceCollector):
         except Exception as e:
             logger.error(f"Error collecting DHCP options: {str(e)}")
         return resources
+
+    def generate_resource_identifier(self, resource: Dict[str, Any]) -> str:
+        """Generate resource identifier"""
+        if resource.get("type") != "aws_vpc_endpoint":
+            return super().generate_resource_identifier(resource)
+        
+        try:
+            details = resource.get("details", {})
+            vpc_id = details.get("vpc_id")
+            service_name = details.get("service_name")
+            endpoint_id = resource.get("id")
+            name = details.get("name")
+
+            # Add debug logging
+            logger.debug(f"Generating identifier for VPC endpoint:")
+            logger.debug(f"  vpc_id: {vpc_id}")
+            logger.debug(f"  service_name: {service_name}")
+            logger.debug(f"  endpoint_id: {endpoint_id}")
+            logger.debug(f"  name: {name}")
+            logger.debug(f"  details: {details}")
+
+            # Use endpoint ID as primary identifier if available
+            if endpoint_id:
+                # Basic identifier
+                identifier = f"{resource['type']}:{endpoint_id}"
+                
+                # Generate more detailed identifier if additional information is available
+                if name and vpc_id and service_name:
+                    identifier = f"{resource['type']}:{name}:{vpc_id}:{service_name}:{endpoint_id}"
+                elif vpc_id and service_name:
+                    identifier = f"{resource['type']}:{vpc_id}:{service_name}:{endpoint_id}"
+                
+                logger.debug(f"Generated identifier: {identifier}")
+                return identifier
+
+            logger.warning("Missing endpoint_id for VPC endpoint")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error generating identifier for VPC endpoint: {str(e)}")
+            logger.debug(f"Resource: {resource}")
+            return None

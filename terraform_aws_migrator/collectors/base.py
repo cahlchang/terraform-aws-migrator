@@ -31,6 +31,33 @@ class ResourceCollector(ABC):
         return {}
 
     @classmethod
+    def get_service_for_resource_type(cls, resource_type: str) -> str:
+        """
+        Return the AWS service name for a resource type
+
+        Args:
+            resource_type: AWS resource type (e.g., aws_vpc, aws_subnet)
+        Returns:
+            Service name (e.g., ec2, s3)
+        """
+        # Special handling for EC2 service
+        ec2_prefixes = [
+            "aws_vpc", "aws_subnet", "aws_instance", "aws_ebs_volume",
+            "aws_internet_gateway", "aws_nat_gateway", "aws_network_acl",
+            "aws_route", "aws_route_table", "aws_vpc_dhcp_options",
+            "aws_vpc_endpoint"
+        ]
+        if any(resource_type.startswith(prefix) for prefix in ec2_prefixes):
+            return "ec2"
+
+        # General case: aws_<service>_* or aws_<service>
+        if resource_type.startswith("aws_"):
+            parts = resource_type[4:].split("_", 1)
+            return parts[0]
+
+        return ""
+
+    @classmethod
     def get_type_display_name(cls, resource_type: str) -> str:
         """Get display name for a resource type"""
         resource_types = cls.get_resource_types()
@@ -79,12 +106,154 @@ class ResourceCollector(ABC):
         account = self.account_id
         region = self.region
 
-        if service == "s3":
+        # Determine service based on resource type
+        if resource_type == "bucket":
             return f"arn:aws:s3:::{resource_id}"
-        elif service == "iam":
+        elif resource_type.startswith("role") or resource_type.startswith("policy"):
             return f"arn:aws:iam::{account}:{resource_type}/{resource_id}"
+        elif service == "ec2":
+            return f"arn:aws:ec2:{region}:{account}:{resource_type}/{resource_id}"
         else:
             return f"arn:aws:{service}:{region}:{account}:{resource_type}/{resource_id}"
+
+    def generate_resource_identifier(self, resource: Dict[str, Any]) -> str:
+        """
+        Generate a standardized resource identifier
+
+        Args:
+            resource: Dictionary containing resource information
+        Returns:
+            Unique resource identifier
+        """
+        resource_type = resource.get("type")
+        resource_id = resource.get("id")
+        
+        # Use ARN if available
+        if "arn" in resource:
+            return resource["arn"]
+            
+        # Special handling for IAM resources
+        if resource_type and resource_type.startswith("aws_iam_"):
+            if resource_type == "aws_iam_role_policy_attachment":
+                role_name = resource.get("role")
+                policy_arn = resource.get("policy_arn")
+                if role_name and policy_arn:
+                    return f"arn:aws:iam::{self.account_id}:role/{role_name}/{policy_arn}"
+            elif resource_type == "aws_iam_user_policy":
+                user_name = resource.get("user")
+                policy_name = resource.get("name")
+                if user_name and policy_name:
+                    return f"{user_name}:{policy_name}"
+            elif resource_type == "aws_iam_user_policy_attachment":
+                user_name = resource.get("user")
+                policy_arn = resource.get("policy_arn")
+                if user_name and policy_arn:
+                    return f"{user_name}:{policy_arn}"
+        
+        # Special handling for VPC endpoints
+        if resource_type == "aws_vpc_endpoint":
+            try:
+                details = resource.get("details", {})
+                vpc_id = details.get("vpc_id")
+                service_name = details.get("service_name")
+                endpoint_id = resource.get("id")
+
+                # Output debug information
+                logger.debug(f"Generating identifier for VPC endpoint:")
+                logger.debug(f"  vpc_id: {vpc_id}")
+                logger.debug(f"  service_name: {service_name}")
+                logger.debug(f"  endpoint_id: {endpoint_id}")
+                logger.debug(f"  details: {details}")
+
+                # Get Name tag (first from details, then from tags)
+                name = details.get("name")
+                if not name:
+                    tags = resource.get("tags", [])
+                    if isinstance(tags, list):
+                        for tag in tags:
+                            if isinstance(tag, dict) and tag.get("Key") == "Name":
+                                name = tag.get("Value")
+                                break
+
+                # Use endpoint ID as primary identifier if available
+                if endpoint_id:
+                    # Basic identifier
+                    identifier = f"{resource_type}:{endpoint_id}"
+                    
+                    # Generate more detailed identifier if additional information is available
+                    if name and vpc_id and service_name:
+                        identifier = f"{resource_type}:{name}:{vpc_id}:{service_name}:{endpoint_id}"
+                    elif vpc_id and service_name:
+                        identifier = f"{resource_type}:{vpc_id}:{service_name}:{endpoint_id}"
+
+                logger.debug(f"Generated identifier for VPC endpoint: {identifier}")
+                return identifier
+
+            except Exception as e:
+                logger.error(f"Error generating identifier for VPC endpoint: {str(e)}")
+                logger.debug("Resource data:", exc_info=True)
+                logger.debug(f"Resource: {resource}")
+                return None
+
+        # Basic identifier generation
+        if resource_type and resource_id:
+            # Tag-based identifier (prioritize Name tag)
+            name_tag = None
+            tags = resource.get("tags", [])
+            if isinstance(tags, dict):
+                name_tag = tags.get("Name")
+            elif isinstance(tags, list):
+                for tag in tags:
+                    if isinstance(tag, dict) and tag.get("Key") == "Name":
+                        name_tag = tag.get("Value")
+                        break
+            
+            if name_tag:
+                return f"{resource_type}:{name_tag}:{resource_id}"
+            return f"{resource_type}:{resource_id}"
+            
+        # Fallback: ID only
+        return resource_id if resource_id else ""
+
+    def _extract_resources_from_state(self, state_data: Dict[str, Any], managed_resources: Dict[str, Any]):
+        """
+        Terraformの状態データからリソースを抽出し、managed_resourcesに追加する。
+        
+        Args:
+            state_data (Dict[str, Any]): Terraformの状態データ
+            managed_resources (Dict[str, Any]): 抽出したリソースを格納する辞書
+        """
+        for resource in state_data.get("resources", []):
+            resource_type = resource.get("type")
+            if resource_type not in self.get_resource_types():
+                continue  # 対応していないリソースタイプはスキップ
+
+            for instance in resource.get("instances", []):
+                attributes = instance.get("attributes", {})
+                resource_id = attributes.get("id") or attributes.get("name")  # 適切なIDの取得
+                if not resource_id:
+                    continue  # IDがないリソースはスキップ
+
+                arn = attributes.get("arn")
+                if not arn:
+                    arn = self.build_arn(resource_type, resource_id)
+
+                identifier = self.generate_resource_identifier({
+                    "type": resource_type,
+                    "id": resource_id,
+                    "arn": arn,
+                    "tags": self.extract_tags(attributes.get("tags", []))
+                })
+
+                managed_resources[arn] = {
+                    "managed": True,
+                    "resource": {
+                        "type": resource_type,
+                        "id": resource_id,
+                        "arn": arn,
+                        "tags": self.extract_tags(attributes.get("tags", [])),
+                    }
+                }
 
 
 class CollectorRegistry:
