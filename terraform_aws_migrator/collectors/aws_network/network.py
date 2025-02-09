@@ -1,5 +1,3 @@
-# terraform_aws_migrator/collectors/aws_networking.py
-
 from typing import Dict, List, Any
 from ..base import ResourceCollector, register_collector
 
@@ -12,11 +10,11 @@ logger = logging.getLogger(__name__)
 @register_collector
 class APIGatewayCollector(ResourceCollector):
     @classmethod
-    def get_service_name(self) -> str:
+    def get_service_name(cls) -> str:
         return "apigateway"
 
     @classmethod
-    def get_resource_types(self) -> Dict[str, str]:
+    def get_resource_types(cls) -> Dict[str, str]:
         return {"aws_api_gateway_rest_api": "API Gateway REST APIs"}
 
     def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
@@ -44,11 +42,11 @@ class APIGatewayCollector(ResourceCollector):
 @register_collector
 class APIGatewayV2Collector(ResourceCollector):
     @classmethod
-    def get_service_name(self) -> str:
+    def get_service_name(cls) -> str:
         return "apigatewayv2"
 
     @classmethod
-    def get_resource_types(self) -> Dict[str, str]:
+    def get_resource_types(cls) -> Dict[str, str]:
         return {"aws_apigatewayv2_api": "API Gateway HTTP/WebSocket APIs"}
 
     def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
@@ -76,11 +74,11 @@ class APIGatewayV2Collector(ResourceCollector):
 @register_collector
 class Route53Collector(ResourceCollector):
     @classmethod
-    def get_service_name(self) -> str:
+    def get_service_name(cls) -> str:
         return "route53"
 
     @classmethod
-    def get_resource_types(self) -> Dict[str, str]:
+    def get_resource_types(cls) -> Dict[str, str]:
         return {"aws_route53_zone": "Route 53 Hosted Zones"}
 
     def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
@@ -113,11 +111,11 @@ class Route53Collector(ResourceCollector):
 @register_collector
 class CloudFrontCollector(ResourceCollector):
     @classmethod
-    def get_service_name(self) -> str:
+    def get_service_name(cls) -> str:
         return "cloudfront"
 
     @classmethod
-    def get_resource_types(self) -> Dict[str, str]:
+    def get_resource_types(cls) -> Dict[str, str]:
         return {"aws_cloudfront_distribution": "CloudFront Distributions"}
 
     def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
@@ -127,9 +125,7 @@ class CloudFrontCollector(ResourceCollector):
             paginator = self.client.get_paginator("list_distributions")
             for page in paginator.paginate():
                 for dist in page["DistributionList"].get("Items", []):
-                    tags = self.client.list_tags_for_resource(Resource=dist["ARN"])[
-                        "Tags"
-                    ]["Items"]
+                    tags = self.client.list_tags_for_resource(Resource=dist["ARN"])["Tags"]["Items"]
 
                     resources.append(
                         {
@@ -151,11 +147,11 @@ class LoadBalancerV2Collector(ResourceCollector):
     """Collector for ALB/NLB and related resources (ELBv2)"""
 
     @classmethod
-    def get_service_name(self) -> str:
+    def get_service_name(cls) -> str:
         return "elbv2"
 
     @classmethod
-    def get_resource_types(self) -> Dict[str, str]:
+    def get_resource_types(cls) -> Dict[str, str]:
         return {
             "aws_lb": "Application and Network Load Balancers",
             "aws_lb_target_group": "Target Groups for ALB/NLB",
@@ -171,6 +167,18 @@ class LoadBalancerV2Collector(ResourceCollector):
             "aws_lb_listener": "elbv2",
             "aws_lb_listener_rule": "elbv2",
         }
+
+    def is_managed(self, resource: Dict[str, Any]) -> bool:
+        """Determine if a resource is managed based on state reader."""
+        if not hasattr(self, 'state_reader'):
+            return False
+        
+        managed_resources = self.state_reader.get_managed_resources()
+        resource_arn = resource.get("LoadBalancerArn")
+        
+        if resource_arn in managed_resources:
+            return True
+        return False
 
     def generate_resource_identifier(self, resource: Dict[str, Any]) -> str:
         """
@@ -194,9 +202,9 @@ class LoadBalancerV2Collector(ResourceCollector):
             if resource_type == "aws_lb":
                 # ALBのARNは loadbalancer/app/{name}/{uuid} の形式
                 # tfstateのidはロードバランサーの名前を含む
-                return f"arn:aws:elasticloadbalancing:{self.region}:{self.account_id}:loadbalancer/app/{resource_id}/{resource.get('details', {}).get('uuid', '1234567890')}"
+                return f"arn:aws:elasticloadbalancing:{self.session.region_name}:{self.account_id}:loadbalancer/app/{resource_id}/{resource.get('details', {}).get('uuid', '1234567890')}"
             elif resource_type == "aws_lb_target_group":
-                return f"arn:aws:elasticloadbalancing:{self.region}:{self.account_id}:targetgroup/{resource_id}"
+                return f"arn:aws:elasticloadbalancing:{self.session.region_name}:{self.account_id}:targetgroup/{resource_id}"
             elif resource_type == "aws_lb_listener":
                 lb_arn = resource.get("details", {}).get("load_balancer_arn")
                 if lb_arn:
@@ -210,363 +218,83 @@ class LoadBalancerV2Collector(ResourceCollector):
         return f"{resource_type}:{resource_id}" if resource_type and resource_id else resource_id or ""
 
     def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
+        """Collect ALB/NLB resources."""
         resources = []
 
         try:
-            # If a specific resource type is requested, collect only that type
-            if target_resource_type:
-                if target_resource_type == "aws_lb":
-                    resources.extend(self._collect_load_balancers())
-                elif target_resource_type == "aws_lb_listener":
-                    resources.extend(self._collect_listeners())
-                elif target_resource_type == "aws_lb_listener_rule":
-                    resources.extend(self._collect_listener_rules())
-                elif target_resource_type == "aws_lb_target_group":
-                    resources.extend(self._collect_target_groups())
-            else:
-                # Collect all ALB-related resources
-                resources.extend(self._collect_load_balancers())
-                resources.extend(self._collect_listeners())
-                resources.extend(self._collect_listener_rules())
-                resources.extend(self._collect_target_groups())
+            if not target_resource_type or target_resource_type == "aws_lb":
+                # Collect load balancers using paginator
+                paginator = self.client.get_paginator("describe_load_balancers")
+                for page in paginator.paginate():
+                    for lb in page["LoadBalancers"]:
+                        # Get tags for the load balancer
+                        tags_response = self.client.describe_tags(ResourceArns=[lb["LoadBalancerArn"]])
+                        tags = tags_response["TagDescriptions"][0]["Tags"] if tags_response["TagDescriptions"] else []
 
-            # テスト用のモックデータがある場合はそれを使用
-            if hasattr(self, '_mock_resources'):
-                resources.extend(self._mock_resources)
+                        # Get managed resource information
+                        managed_resources = getattr(self, 'state_reader', {}).get_managed_resources() if hasattr(self, 'state_reader') else {}
+                        managed_info = managed_resources.get(lb["LoadBalancerArn"], {})
 
-        except Exception as e:
-            logger.error(f"Error collecting ALB resources: {str(e)}")
-            raise e
-
-        return resources
-
-    def _collect_load_balancers(self) -> List[Dict[str, Any]]:
-        """Collect Application Load Balancers"""
-        resources = []
-        try:
-            paginator = self.client.get_paginator("describe_load_balancers")
-            for page in paginator.paginate():
-                for lb in page["LoadBalancers"]:
-                    if lb["Type"] == "application":  # Only collect ALBs
-                        try:
-                            # Get tags
-                            tags_response = self.client.describe_tags(
-                                ResourceArns=[lb["LoadBalancerArn"]]
-                            )
-                            tags = (
-                                tags_response["TagDescriptions"][0]["Tags"]
-                                if tags_response["TagDescriptions"]
-                                else []
-                            )
-
-                            resources.append({
-                                "type": "aws_lb",
-                                "id": lb["LoadBalancerName"],
-                                "arn": lb["LoadBalancerArn"],
-                                "tags": tags,
-                                "details": {
-                                    "dns_name": lb.get("DNSName"),
-                                    "scheme": lb.get("Scheme"),
-                                    "vpc_id": lb.get("VpcId"),
-                                    "idle_timeout": int(
-                                        next(
-                                            (attr["Value"] for attr in self.client.describe_load_balancer_attributes(
-                                                LoadBalancerArn=lb["LoadBalancerArn"]
-                                            )["Attributes"] if attr["Key"] == "idle_timeout.timeout_seconds"),
-                                            60  # default value if not found
-                                        )
-                                    ),
-                                    "security_groups": lb.get("SecurityGroups", []),
-                                    "subnets": [
-                                        az["SubnetId"]
-                                        for az in lb.get("AvailabilityZones", [])
-                                    ],
-                                    "state": lb.get("State", {}).get("Code"),
-                                    "ip_address_type": lb.get("IpAddressType"),
-                                    # LoadBalancerArnから最後のUUIDを抽出
-                                    "uuid": lb["LoadBalancerArn"].split("/")[-1],
-                                },
-                            })
-                        except Exception as e:
-                            logger.error(f"Error collecting tags for ALB {lb['LoadBalancerName']}: {str(e)}")
-
-        except Exception as e:
-            logger.error(f"Error collecting Application Load Balancers: {str(e)}")
-
-        return resources
-
-    def _collect_target_groups(self) -> List[Dict[str, Any]]:
-        """Collect Target Groups and their attachments"""
-        resources = []
-        try:
-            # Collect Target Groups
-            paginator = self.client.get_paginator("describe_target_groups")
-            for page in paginator.paginate():
-                for tg in page["TargetGroups"]:
-                    try:
-                        # Get tags
-                        tags_response = self.client.describe_tags(
-                            ResourceArns=[tg["TargetGroupArn"]]
-                        )
-                        tags = (
-                            tags_response["TagDescriptions"][0]["Tags"]
-                            if tags_response["TagDescriptions"]
-                            else []
-                        )
-                    except Exception:
-                        tags = []
-
-                    # Build health check configuration
-                    health_check = None
-                    if tg.get("HealthCheckEnabled"):
-                        health_check = {
-                            "enabled": True,
-                            "path": tg.get("HealthCheckPath", "/"),
-                            "interval": tg.get("HealthCheckIntervalSeconds"),
-                            "timeout": tg.get("HealthCheckTimeoutSeconds"),
-                            "healthy_threshold": tg.get("HealthyThresholdCount"),
-                            "unhealthy_threshold": tg.get("UnhealthyThresholdCount"),
-                            "matcher": tg.get("Matcher", {}).get("HttpCode", "200"),
+                        resource = {
+                            "type": "aws_lb",
+                            "id": lb["LoadBalancerName"],
+                            "arn": lb["LoadBalancerArn"],
+                            "tags": tags,
+                            "managed": bool(managed_info),
+                            "details": {
+                                "vpc_id": lb.get("VpcId"),
+                                "security_groups": lb.get("SecurityGroups", []),
+                                "subnets": [az["SubnetId"] for az in lb.get("AvailabilityZones", [])],
+                                "dns_name": lb.get("DNSName"),
+                                "scheme": lb.get("Scheme"),
+                                "load_balancer_type": lb.get("Type")
+                            }
                         }
-                        if tg.get("HealthCheckProtocol"):
-                            health_check["protocol"] = tg["HealthCheckProtocol"]
-                        if tg.get("HealthCheckPort"):
-                            health_check["port"] = tg["HealthCheckPort"]
 
-                    # Build resource details
-                    resource = {
-                        "type": "aws_lb_target_group",
-                        "id": tg["TargetGroupName"],
-                        "arn": tg["TargetGroupArn"],
-                        "protocol": tg.get("Protocol"),
-                        "port": tg.get("Port"),
-                        "vpc_id": tg.get("VpcId"),
-                        "target_type": tg.get("TargetType"),
-                        "tags": tags,
-                    }
+                        # Add module information if available
+                        if "module" in managed_info:
+                            resource["module"] = managed_info["module"]
+                        resources.append(resource)
 
-                    # Add target group attributes
-                    try:
-                        attrs = self.client.describe_target_group_attributes(
+            if not target_resource_type or target_resource_type == "aws_lb_target_group":
+                # Collect target groups using paginator
+                paginator = self.client.get_paginator("describe_target_groups")
+                for page in paginator.paginate():
+                    for tg in page["TargetGroups"]:
+                        # Get tags for the target group
+                        tags_response = self.client.describe_tags(ResourceArns=[tg["TargetGroupArn"]])
+                        tags = tags_response["TagDescriptions"][0]["Tags"] if tags_response["TagDescriptions"] else []
+
+                        # Get target group attributes
+                        attributes = self.client.describe_target_group_attributes(
                             TargetGroupArn=tg["TargetGroupArn"]
                         )["Attributes"]
 
-                        for attr in attrs:
-                            if attr["Key"] == "deregistration_delay.timeout_seconds":
-                                resource["deregistration_delay"] = int(attr["Value"])
-                            elif attr["Key"] == "lambda.multi_value_headers.enabled":
-                                resource["lambda_multi_value_headers_enabled"] = (
-                                    attr["Value"].lower() == "true"
-                                )
-                            elif attr["Key"] == "proxy_protocol_v2.enabled":
-                                resource["proxy_protocol_v2"] = (
-                                    attr["Value"].lower() == "true"
-                                )
-                            elif attr["Key"] == "slow_start.duration_seconds":
-                                resource["slow_start"] = int(attr["Value"])
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to get target group attributes for {tg['TargetGroupName']}: {str(e)}"
-                        )
-
-                    # Add health check configuration if any
-                    if health_check:
-                        resource["health_check"] = health_check
-
-                    resources.append(resource)
-
-        except Exception as e:
-            logger.error(f"Error collecting target groups: {str(e)}", exc_info=True)
-
-        return resources
-
-
-    def _collect_listeners(self) -> List[Dict[str, Any]]:
-        resources:List = []
-        if not hasattr(self, 'client'):
-            logger.error("No ELBv2 client available")
-            return resources
-
-        try:
-            paginator = self.client.get_paginator("describe_load_balancers")
-            lb_pages = paginator.paginate()
-        except Exception as e:
-            logger.error(f"Failed to create load balancer paginator: {e}")
-            raise e
-
-        for page in lb_pages:
-            for lb in page.get("LoadBalancers", []):
-                lb_arn = lb.get("LoadBalancerArn")
-                if not lb_arn:
-                    continue
-
-                try:
-                    listener_paginator = self.client.get_paginator("describe_listeners")
-                    listener_pages = listener_paginator.paginate(LoadBalancerArn=lb_arn)
-                except Exception as e:
-                    logger.error(f"Failed to get listeners for LB {lb_arn}: {e}")
-                    raise e
-
-                for listener_page in listener_pages:
-                    for listener in listener_page.get("Listeners", []):
-                        listener_arn = listener.get("ListenerArn")
-                        if not listener_arn:
-                            continue
-
-                        tags = []
-                        try:
-                            tags_response = self.client.describe_tags(
-                                ResourceArns=[listener_arn]
-                            )
-                            if tags_response.get("TagDescriptions"):
-                                tags = tags_response["TagDescriptions"][0].get("Tags", [])
-                        except Exception as e:
-                            logger.debug(f"Failed to get tags for listener {listener_arn}: {e}")
-
-                        # Create resource with all available information
-                        resources.append({
-                            "type": "aws_lb_listener",
-                            "id": listener_arn.split("/")[-1],
-                            "arn": listener_arn,
+                        resource = {
+                            "type": "aws_lb_target_group",
+                            "id": tg["TargetGroupName"],
+                            "arn": tg["TargetGroupArn"],
                             "tags": tags,
-                            "details": {
-                                "load_balancer_arn": lb_arn,
-                                "port": listener.get("Port"),
-                                "protocol": listener.get("Protocol"),
-                                "ssl_policy": listener.get("SslPolicy"),
-                                "certificates": listener.get("Certificates", []),
-                                "actions": listener.get("DefaultActions", [])
-                            }
-                        })
-        return resources
-
-    def _collect_listener_rules(self) -> List[Dict[str, Any]]:
-        """Collect Rules for ALB Listeners"""
-        resources = []
-        try:
-            paginator = self.client.get_paginator("describe_load_balancers")
-            for page in paginator.paginate():
-                for lb in page["LoadBalancers"]:
-                    try:
-                        listener_paginator = self.client.get_paginator("describe_listeners")
-                        for listener_page in listener_paginator.paginate(LoadBalancerArn=lb["LoadBalancerArn"]):
-                            for listener in listener_page["Listeners"]:
-                                try:
-                                    rules = self.client.describe_rules(
-                                        ListenerArn=listener["ListenerArn"]
-                                    ).get("Rules", [])
-                                    
-                                    for rule in rules:
-                                        # Skip default rules
-                                        if rule.get("IsDefault", False):
-                                            continue
-                                            
-                                        # Get rule tags
-                                        try:
-                                            tags_response = self.client.describe_tags(
-                                                ResourceArns=[rule["RuleArn"]]
-                                            )
-                                            tags = (
-                                                tags_response["TagDescriptions"][0]["Tags"]
-                                                if tags_response["TagDescriptions"]
-                                                else []
-                                            )
-                                        except Exception:
-                                            tags = []
-
-                                        resources.append({
-                                            "type": "aws_lb_listener_rule",
-                                            "id": rule["RuleArn"].split("/")[-1],
-                                            "arn": rule["RuleArn"],
-                                            "tags": tags,
-                                            "details": {
-                                                "listener_arn": listener["ListenerArn"],
-                                                "priority": rule.get("Priority"),
-                                                "conditions": rule.get("Conditions", []),
-                                                "actions": rule.get("Actions", []),
-                                            },
-                                        })
-                                except Exception as e:
-                                    logger.error(f"Error collecting rules for listener {listener['ListenerArn']}: {e}")
-                    except Exception as e:
-                        logger.error(f"Error collecting rules for LB {lb['LoadBalancerArn']}: {e}")
-        except Exception as e:
-            logger.error(f"Error collecting listener rules: {e}")
-        return resources
-
-@register_collector
-class ClassicLoadBalancerCollector(ResourceCollector):
-    """Collector for Classic Load Balancers (ELB)"""
-
-    @classmethod
-    def get_service_name(self) -> str:
-        return "elb"
-
-    @classmethod
-    def get_resource_types(self) -> Dict[str, str]:
-        return {"aws_elb": "Legacy Load Balancers"}
-
-    def collect(self, target_resource_type: str = "") -> List[Dict[str, Any]]:
-        resources = []
-        try:
-            paginator = self.client.get_paginator("describe_load_balancers")
-            for page in paginator.paginate():
-                for lb in page["LoadBalancerDescriptions"]:
-                    # Get tags
-                    try:
-                        tags_response = self.client.describe_tags(
-                            LoadBalancerNames=[lb["LoadBalancerName"]]
-                        )
-                        tags = (
-                            tags_response["TagDescriptions"][0]["Tags"]
-                            if tags_response["TagDescriptions"]
-                            else []
-                        )
-                    except Exception:
-                        tags = []
-
-                    resources.append(
-                        {
-                            "type": "aws_elb",
-                            "id": lb["LoadBalancerName"],
-                            "arn": f"arn:aws:elasticloadbalancing:{self.session.region_name}:{self.account_id}:loadbalancer/{lb['LoadBalancerName']}",
-                            "tags": tags,
-                            "details": {
-                                "dns_name": lb.get("DNSName"),
-                                "scheme": lb.get("Scheme"),
-                                "vpc_id": lb.get("VPCId"),
-                                "subnets": lb.get("Subnets", []),
-                                "security_groups": lb.get("SecurityGroups", []),
-                                "instances": [
-                                    instance["InstanceId"]
-                                    for instance in lb.get("Instances", [])
-                                ],
-                                "listeners": [
-                                    {
-                                        "protocol": listener.get("Protocol"),
-                                        "load_balancer_port": listener.get(
-                                            "LoadBalancerPort"
-                                        ),
-                                        "instance_protocol": listener.get(
-                                            "InstanceProtocol"
-                                        ),
-                                        "instance_port": listener.get("InstancePort"),
-                                        "ssl_certificate_id": listener.get(
-                                            "SSLCertificateId"
-                                        ),
-                                    }
-                                    for listener in lb.get("ListenerDescriptions", [])
-                                ],
-                                "health_check": lb.get("HealthCheck"),
+                            "protocol": tg["Protocol"],
+                            "port": tg["Port"],
+                            "vpc_id": tg["VpcId"],
+                            "target_type": tg["TargetType"],
+                            "health_check": {
+                                "enabled": tg["HealthCheckEnabled"],
+                                "path": tg.get("HealthCheckPath"),
+                                "protocol": tg["HealthCheckProtocol"],
+                                "port": tg["HealthCheckPort"],
+                                "interval": tg["HealthCheckIntervalSeconds"],
+                                "timeout": tg["HealthCheckTimeoutSeconds"],
+                                "healthy_threshold": tg["HealthyThresholdCount"],
+                                "unhealthy_threshold": tg["UnhealthyThresholdCount"],
+                                "matcher": tg.get("Matcher", {}).get("HttpCode")
                             },
+                            "attributes": {attr["Key"]: attr["Value"] for attr in attributes}
                         }
-                    )
-
-            if self.progress_callback:
-                self.progress_callback("elb", "Completed", len(resources))
+                        resources.append(resource)
 
         except Exception as e:
-            if self.progress_callback:
-                self.progress_callback("elb", f"Error: {str(e)}", 0)
+            logger.error(f"Error collecting load balancer resources: {e}")
 
         return resources

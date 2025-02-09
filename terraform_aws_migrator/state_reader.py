@@ -311,11 +311,12 @@ class TerraformStateReader:
             # Check if object exists
             try:
                 head = s3_client.head_object(Bucket=bucket, Key=key)
-            except s3_client.exceptions.ClientError as e:
-                if e.response['Error']['Code'] == '404':
+            except Exception as e:
+                if hasattr(e, 'response') and e.response.get('Error', {}).get('Code') == '404':
                     logger.warning(f"State file does not exist in S3: s3://{bucket}/{key}")
                     return None
-                raise
+                logger.error(f"Error checking S3 object: {str(e)}")
+                return None
 
             # Check file size
             content_length = int(head['ContentLength'])
@@ -328,33 +329,80 @@ class TerraformStateReader:
             
             try:
                 # S3のレスポンスボディを取得
-                body = response["Body"]
-                # readメソッドを呼び出してデータを取得
-                content = body.read()
-                # バイト列の場合はデコード
-                if isinstance(content, (bytes, bytearray)):
-                    content = content.decode("utf-8")
-                elif isinstance(content, str):
-                    pass
-                else:
-                    # その他の場合（モックなど）は文字列として扱う
-                    content = str(content)
-                # JSONとしてパース
-                state_data = json.loads(content)
-                if not isinstance(state_data, dict):
-                    logger.warning(f"Invalid state file format (not a dictionary): s3://{bucket}/{key}")
-                    return None
-                
-                # Basic validation of state file structure
-                if "version" not in state_data:
-                    logger.warning(f"State file missing version field: s3://{bucket}/{key}")
+                body = response.get("Body")
+                if not body:
+                    logger.error("No body in S3 response")
                     return None
 
-                logger.debug(f"Successfully read state file from S3: s3://{bucket}/{key}")
-                return state_data
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON in S3 state file s3://{bucket}/{key}: {str(e)}")
+                try:
+                    # readメソッドを呼び出してデータを取得
+                    logger.debug("Reading content from S3...")
+                    content = body.read()
+                    
+                    # コンテンツの詳細なデバッグ情報
+                    logger.debug(f"Raw content type: {type(content)}")
+                    
+                    # MockStreamingBodyからの読み取り
+                    if hasattr(body, '_content'):
+                        logger.debug("Reading from MockStreamingBody")
+                        content = body.read()
+                    
+                    if isinstance(content, (bytes, bytearray)):
+                        logger.debug(f"Content length: {len(content)} bytes")
+                        if len(content) > 0:
+                            logger.debug(f"First few bytes: {content[:50].hex()}")
+                            logger.debug(f"Content as string: {content.decode('utf-8', errors='replace')[:200]}")
+                        else:
+                            logger.debug("Content is empty bytes")
+                    else:
+                        logger.debug(f"Content is not bytes: {type(content)}")
+                        logger.debug(f"Content value: {str(content)[:200]}")
+                    logger.debug(f"Raw content length: {len(content)}")
+                    logger.debug(f"Raw content: {content[:200]}")  # 最初の200バイトを表示
+                    logger.debug(f"Raw content hex: {content[:50].hex()}")  # 最初の50バイトをHEXで表示
+                    
+                    # バイト列の場合はデコード
+                    if isinstance(content, (bytes, bytearray)):
+                        try:
+                            content = content.decode("utf-8")
+                            logger.debug(f"Decoded content: {content[:200]}")  # デコードされた内容の最初の200文字を表示
+                        except UnicodeDecodeError as e:
+                            logger.error(f"Failed to decode content: {str(e)}")
+                            return None
+                    elif not isinstance(content, str):
+                        # その他の場合は文字列として扱う
+                        content = str(content)
+                        logger.debug(f"Converted content: {content[:200]}")  # 変換された内容の最初の200文字を表示
+                    
+                    logger.debug("Successfully processed content")
+                    
+                    # JSONとしてパース
+                    try:
+                        state_data = json.loads(content)
+                        if not isinstance(state_data, dict):
+                            logger.error(f"Parsed content is not a dictionary: {type(state_data)}")
+                            return None
+                        
+                        # 必須フィールドの検証
+                        required_fields = ["version", "resources"]
+                        for field in required_fields:
+                            if field not in state_data:
+                                logger.error(f"State data does not contain required field: {field}")
+                                return None
+                        
+                        return state_data
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Invalid JSON in S3 state file s3://{bucket}/{key}: {str(e)}")
+                        return None
+                finally:
+                    # ストリーミングボディをクローズ
+                    try:
+                        body.close()
+                    except Exception as e:
+                        logger.warning(f"Failed to close streaming body: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error reading state file from S3 s3://{bucket}/{key}: {str(e)}")
+                logger.debug(traceback.format_exc())
                 return None
 
         except Exception as e:

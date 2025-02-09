@@ -1,5 +1,3 @@
-# terraform_aws_migrator/collectors/__init__.py
-
 import importlib
 from pathlib import Path
 from .base import ResourceCollector, register_collector
@@ -8,6 +6,7 @@ from .base import ResourceCollector, register_collector
 def _import_collectors():
     current_dir = Path(__file__).parent
 
+    # aws_*.pyファイルをインポート
     for file_path in current_dir.glob("aws_*.py"):
         module_name = f".{file_path.stem}"
         try:
@@ -17,6 +16,7 @@ def _import_collectors():
         except ImportError as e:
             print(f"Warning: Failed to import {module_name}: {e}")
 
+    # aws_*ディレクトリ内のPythonファイルをインポート
     for dir_path in current_dir.glob("aws_*"):
         if not dir_path.is_dir():
             continue

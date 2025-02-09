@@ -207,53 +207,17 @@ class ResourceCollector(ABC):
                     if isinstance(tag, dict) and tag.get("Key") == "Name":
                         name_tag = tag.get("Value")
                         break
-            
+        
             if name_tag:
                 return f"{resource_type}:{name_tag}:{resource_id}"
             return f"{resource_type}:{resource_id}"
-            
+                
         # Fallback: ID only
         return resource_id if resource_id else ""
 
-    def _extract_resources_from_state(self, state_data: Dict[str, Any], managed_resources: Dict[str, Any]):
-        """
-        Terraformの状態データからリソースを抽出し、managed_resourcesに追加する。
-        
-        Args:
-            state_data (Dict[str, Any]): Terraformの状態データ
-            managed_resources (Dict[str, Any]): 抽出したリソースを格納する辞書
-        """
-        for resource in state_data.get("resources", []):
-            resource_type = resource.get("type")
-            if resource_type not in self.get_resource_types():
-                continue  # 対応していないリソースタイプはスキップ
 
-            for instance in resource.get("instances", []):
-                attributes = instance.get("attributes", {})
-                resource_id = attributes.get("id") or attributes.get("name")  # 適切なIDの取得
-                if not resource_id:
-                    continue  # IDがないリソースはスキップ
-
-                arn = attributes.get("arn")
-                if not arn:
-                    arn = self.build_arn(resource_type, resource_id)
-
-                identifier = self.generate_resource_identifier({
-                    "type": resource_type,
-                    "id": resource_id,
-                    "arn": arn,
-                    "tags": self.extract_tags(attributes.get("tags", []))
-                })
-
-                managed_resources[arn] = {
-                    "managed": True,
-                    "resource": {
-                        "type": resource_type,
-                        "id": resource_id,
-                        "arn": arn,
-                        "tags": self.extract_tags(attributes.get("tags", [])),
-                    }
-                }
+def some_utility_function(data: Dict[str, Any]) -> Dict[str, Any]:
+    return {f"{k}_transformed": f"{v}_transformed" for k, v in data.items()}
 
 
 class CollectorRegistry:
@@ -276,7 +240,7 @@ class CollectorRegistry:
         instances = []
         for collector_cls in self.collectors:
             try:
-                collector = collector_cls(session)
+                collector = collector_cls(session=session)
                 # category or resource type filter
                 if target_type:
                     resource_types = collector.get_resource_types()
@@ -307,6 +271,6 @@ class CollectorRegistry:
 registry = CollectorRegistry()
 
 
-def register_collector(collector_class: type):
+def register_collector(collector_class: type) -> type:
     """Decorator to register a collector class"""
     return registry.register(collector_class)

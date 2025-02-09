@@ -13,11 +13,11 @@ def _split_resource_type(resource_type: str) -> Tuple[str, str]:
     Separate module path and resource type
 
     Args:
-        resource_type: Resource type (e.g., 'module.fa_common_modules_stag.aws_instance')
+        resource_type: Resource type (e.g., 'module.example_module.aws_instance')
 
     Returns:
         Tuple[str, str]: (module path, resource type)
-        e.g., ('module.fa_common_modules_stag', 'aws_instance')
+        e.g., ('module.example_module', 'aws_instance')
     """
     parts = resource_type.split('.')
     if len(parts) > 2 and parts[0] == 'module':
